@@ -33,7 +33,7 @@ impl NodeData {
         requires
             *self != NodeData::Dummy
         ensures
-            forall |i: u32| #![auto] *self == NodeData::Node(i) ==> value == i
+            *self == NodeData::Node(value)
     {
         match self {
             NodeData::Node(i) => *i,
@@ -516,16 +516,51 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
         // We want a fresh view every loop.
         {
             let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
-
+            let current_node_data = current_locked_node.data_view.get();
             // Check if we already have this node:
-            if (current_node_view.data.get() == insert_data) {
+            if (insert_data == current_node_data) {
                 locked_dummy_node.release_lock(dummy_node_perm);
                 current_locked_node.release_lock(current_node_perm);
                 return;
             }
             // Check if we need to insert inbetween dummy and first node:
-            if (current_node_view.data.get() > insert_data) {
+            if (insert_data < current_node_data) {
                 // Insert inbetween dummy and normal.
+                let temp_dummy_node = DummyNode {
+                    data: NodeData::Dummy,
+                    next_node: None,
+                    map_token: None
+                };
+
+                let mut dummy_node = locked_dummy_node.cell.replace(Tracked(dummy_node_perm.borrow_mut()), temp_dummy_node);
+                let old_dummy_node_token = dummy_node.map_token.unwrap();
+
+                let tracked tuple;
+                let tracked updated_dummy_node_token;
+                let tracked new_node_token;
+
+                proof {
+                    tuple = locked_dummy_node.instance.borrow().insert_node_inbetween_dummy_and_normal(current_node_data, insert_data, old_dummy_node_token.get());
+                    updated_dummy_node_token = tuple.0.get();
+                    new_node_token = tuple.1.get();
+                }
+
+                let new_locked_node = LockedNode::new(
+                    NodeData::Node(insert_data), 
+                    Tracked(new_node_token), 
+                    Some(current_locked_node.clone()), 
+                    locked_dummy_node.instance.clone()
+                );
+
+                let new_dummy_node = DummyNode {
+                    data: NodeData::Dummy,
+                    next_node: Some(Arc::new(new_locked_node)),
+                    map_token: Some(Tracked(updated_dummy_node_token))
+                };
+
+                locked_dummy_node.cell.replace(Tracked(dummy_node_perm.borrow_mut()), new_dummy_node);
+
+
                 locked_dummy_node.release_lock(dummy_node_perm);
                 current_locked_node.release_lock(current_node_perm);
                 return;
