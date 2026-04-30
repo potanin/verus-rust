@@ -492,7 +492,9 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
     requires
         locked_dummy_node.wf()
     ensures
-        locked_dummy_node.wf()
+        locked_dummy_node.wf(),
+        forall |i: int| #![auto] 0 <= i < insert_data_list.len() ==> 
+            locked_dummy_node.contains(NodeData::Node(insert_data_list[i]))
 {
     let mut i = 0;
     let mut join_handles: Vec<JoinHandle<Tracked<machine::node_witnesses>>> = Vec::new();
@@ -515,16 +517,28 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
 
 
     let mut i = 0;
+    let mut witnesses: Vec<Tracked<machine::node_witnesses>> = Vec::new();
     while i < insert_data_list.len() 
         invariant
             locked_dummy_node.wf(),
             join_handles.len() == insert_data_list.len() - i,
+            witnesses.len() == i
         decreases
             insert_data_list.len() - i
     {
-        let _ = join_handles.pop().unwrap().join();
+        let join_handle = join_handles.pop().unwrap();
+        match join_handle.join() {
+            Result::Ok(witness) => {
+                witnesses.push(witness);
+            },
+            _ => {
+                return ;
+            },
+        };
         i = i + 1;
     }
+
+    assert(witnesses.len() == insert_data_list.len());
 }
 
 fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u32) -> (witness: Tracked<machine::node_witnesses>)
@@ -598,7 +612,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
         
 
                 proof {
-                    duplicate_witness = locked_dummy_node.instance.borrow().duplicate_witness(insert_data, &current_node_token.borrow());
+                    duplicate_witness = current_locked_node.instance.borrow().duplicate_witness(insert_data, &current_node_token.borrow());
                 }
 
                 locked_dummy_node.release_lock(dummy_node_perm);
@@ -731,7 +745,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
                     let tracked duplicate_witness;
 
                     proof {
-                        duplicate_witness = locked_dummy_node.instance.borrow().duplicate_witness(insert_data, &next_node_token.borrow());
+                        duplicate_witness = next_locked_node.instance.borrow().duplicate_witness(insert_data, &next_node_token.borrow());
                     }
 
                     current_locked_node.release_lock(current_node_perm);
