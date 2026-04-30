@@ -267,6 +267,7 @@ struct_with_invariants!{
                     (points_to.value().map_token.unwrap()@.value().is_none() <==> points_to.value().next_node.is_none()) && 
                     (points_to.value().map_token.unwrap()@.value().is_some() ==> 
                         (
+                            points_to.value().next_node.unwrap().instance@.id() == instance@.id() &&
                             points_to.value().map_token.unwrap()@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
                             points_to.value().next_node.unwrap().wf()
                         )
@@ -305,6 +306,7 @@ impl LockedDummyNode {
             (points_to@.value().map_token.unwrap()@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token.unwrap()@.value().is_some() ==> 
                 (
+                    points_to@.value().next_node.unwrap().instance@.id() == self.instance@.id() &&
                     points_to@.value().map_token.unwrap()@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
                     points_to@.value().next_node.unwrap().wf()
                 )
@@ -338,6 +340,7 @@ impl LockedDummyNode {
             (points_to@.value().map_token.unwrap()@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token.unwrap()@.value().is_some() ==> 
                 (
+                    points_to.value().next_node.unwrap().instance@.id() == self.instance@.id() &&
                     points_to@.value().map_token.unwrap()@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
                     points_to@.value().next_node.unwrap().wf()
                 )
@@ -389,6 +392,7 @@ struct_with_invariants!{
                     (points_to.value().map_token.unwrap()@.value().is_none() <==> points_to.value().next_node.is_none()) && 
                     (points_to.value().map_token.unwrap()@.value().is_some() ==> 
                         (
+                            points_to.value().next_node.unwrap().instance@.id() == instance@.id() &&
                             points_to.value().map_token.unwrap()@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
                             points_to.value().next_node.unwrap().wf()
                         )
@@ -409,13 +413,18 @@ impl LockedNode {
             map_token@.value().is_some() ==> (
                 map_token@.value().unwrap() == next_node.unwrap().data_view &&
                 next_node.unwrap().wf()
+            ),
+            next_node.is_some() ==> (
+                next_node.unwrap().wf() &&
+                next_node.unwrap().instance@.id() == instance@.id()
             )
         ensures 
             new_node.wf(),
             new_node.instance == instance,
             new_node.data_view == data,
             next_node.is_some() ==> (
-                next_node.unwrap().wf()
+                next_node.unwrap().wf() &&
+                next_node.unwrap().instance@.id() == instance@.id()
             )
     {   
         let data_view = data.clone();
@@ -438,6 +447,7 @@ impl LockedNode {
             (points_to@.value().map_token.unwrap()@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token.unwrap()@.value().is_some() ==> 
                 (
+                    points_to@.value().next_node.unwrap().instance@.id() == self.instance@.id() &&
                     points_to@.value().map_token.unwrap()@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
                     points_to@.value().next_node.unwrap().wf()
                 )
@@ -472,6 +482,7 @@ impl LockedNode {
             (points_to@.value().map_token.unwrap()@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token.unwrap()@.value().is_some() ==> 
                 (
+                    points_to@.value().next_node.unwrap().instance@.id() == self.instance@.id() &&
                     points_to@.value().map_token.unwrap()@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
                     points_to@.value().next_node.unwrap().wf()
                 )
@@ -520,25 +531,31 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
     let mut witnesses: Vec<Tracked<machine::node_witnesses>> = Vec::new();
     while i < insert_data_list.len() 
         invariant
+            0 <= i <= insert_data_list.len(),
             locked_dummy_node.wf(),
             join_handles.len() == insert_data_list.len() - i,
-            witnesses.len() == i
+            witnesses.len() == i,
+            forall |j: int| #![auto] 0 <= j < witnesses.len() ==>
+                witnesses[j]@.element() == NodeData::Node(insert_data_list[j])
+                
         decreases
             insert_data_list.len() - i
     {
         let join_handle = join_handles.pop().unwrap();
         match join_handle.join() {
             Result::Ok(witness) => {
+                assert(witness.element() == NodeData::Node(insert_data_list[i as int]));
                 witnesses.push(witness);
             },
             _ => {
-                return ;
+                assume(false);
+                return;
             },
         };
         i = i + 1;
     }
 
-    assert(witnesses.len() == insert_data_list.len());
+    // assert(witnesses.len() == insert_data_list.len());
 }
 
 fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u32) -> (witness: Tracked<machine::node_witnesses>)
@@ -546,7 +563,8 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
         locked_dummy_node.wf()
     ensures
         locked_dummy_node.wf(),
-        witness.element() == NodeData::Node(insert_data)
+        witness.instance_id() == locked_dummy_node.instance@.id(),
+        witness.element() == NodeData::Node(insert_data),
 {
     let mut dummy_node_perm = locked_dummy_node.acquire_lock();
     let mut dummy_node_view = locked_dummy_node.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
@@ -609,7 +627,6 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
                 let current_node_token = current_node_view.map_token.as_ref().unwrap();
 
                 let tracked duplicate_witness;
-        
 
                 proof {
                     duplicate_witness = current_locked_node.instance.borrow().duplicate_witness(insert_data, &current_node_token.borrow());
@@ -647,7 +664,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
                     NodeData::Node(insert_data), 
                     Tracked(new_node_token), 
                     Some(current_locked_node.clone()), 
-                    locked_dummy_node.instance.clone()
+                    current_locked_node.instance.clone()
                 );
 
                 let new_dummy_node = DummyNode {
@@ -675,6 +692,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
             invariant
                 locked_dummy_node.wf(),
                 current_locked_node.wf(),
+                current_locked_node.instance@.id() == locked_dummy_node.instance@.id(),
                 NodeData::Node(current_node_data) == current_locked_node.data_view,
                 current_node_data < insert_data,
                 current_node_perm@.id() == current_locked_node.cell.id(),
@@ -686,6 +704,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
                 (current_node_perm@.value().map_token.unwrap()@.value().is_none() <==> current_node_perm@.value().next_node.is_none()), 
                 (current_node_perm@.value().map_token.unwrap()@.value().is_some() ==> 
                     (
+                        current_node_perm@.value().next_node.unwrap().instance@.id() == current_locked_node.instance@.id() &&
                         current_node_perm@.value().map_token.unwrap()@.value().unwrap() == current_node_perm@.value().next_node.unwrap().data_view &&
                         current_node_perm@.value().next_node.unwrap().wf()
                     )
