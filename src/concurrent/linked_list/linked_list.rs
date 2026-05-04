@@ -840,6 +840,7 @@ impl LinkedList {
         requires
             self.wf(),
             witness.element() == NodeData::Node(delete_data),
+            witness.instance_id() == self.instance.id(),
         ensures
             self.wf()
     {
@@ -852,73 +853,116 @@ impl LinkedList {
 
         let mut current_locked_node = dummy_node_view.head.as_ref().unwrap().clone();
         let mut current_node_perm = current_locked_node.acquire_lock();
-        // Indent so that the view is dropped before the loop
-        // We want a fresh view every loop.
-        {
-            let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
+        let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
+        let mut current_node_data = current_locked_node.data_view.get();
 
-            // Check if we are deleting the first node:
-            if (delete_data == current_locked_node.data_view.get()) {
-                // Check if this is the tail:
-                if (current_node_view.next_node.is_none()) {
-                    let temp_dummy_node = DummyNode {
-                        head: None,
-                        map_token: None
-                    };
+        // Check if we are deleting the first node:
+        if (delete_data == current_locked_node.data_view.get()) {
+            // Check if this is the tail:
+            if (current_node_view.next_node.is_none()) {
+                let temp_dummy_node = DummyNode {
+                    head: None,
+                    map_token: None
+                };
 
-                    let mut old_dummy_node = self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), temp_dummy_node);
-                    let old_dummy_node_token = old_dummy_node.map_token.unwrap();
+                let mut old_dummy_node = self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), temp_dummy_node);
+                let old_dummy_node_token = old_dummy_node.map_token.unwrap();
 
-                    let temp_tail_node = Node {
-                        data: 0,
-                        next_node: None,
-                        map_token: None
-                    };
+                let temp_tail_node = Node {
+                    data: 0,
+                    next_node: None,
+                    map_token: None
+                };
 
-                    let mut deleted_tail_node = current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), temp_tail_node);
-                    let deleted_tail_token = deleted_tail_node.map_token.unwrap();
-                    
+                let mut deleted_tail_node = current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), temp_tail_node);
+                let deleted_tail_token = deleted_tail_node.map_token.unwrap();
+                
 
-                    let tracked new_dummy_token;
+                let tracked new_dummy_token;
 
-                    proof {
-                        // remove nodes -= [NodeData::Dummy => Some(NodeData::Node(delete_node))];
-                        // remove nodes -= [NodeData::Node(delete_node) => None];
-                        // remove node_witnesses -= set {NodeData::Node(delete_node)};
-                        // add nodes += [NodeData::Dummy => None];
-
-                        assert(old_dummy_node_token.key() == NodeData::Dummy && old_dummy_node_token.value() == Some(NodeData::Node(current_node_view.data)));
-                        assert(deleted_tail_token.key() == NodeData::Node(current_node_view.data) && deleted_tail_token.value() == None::<NodeData>);
-
-                        new_dummy_token = current_locked_node.instance.borrow().delete_tail_after_dummy_node(current_node_view.data, old_dummy_node_token.get(), deleted_tail_token.get(), witness.get());
-                    }
-
-                    old_dummy_node.map_token = Some(Tracked(new_dummy_token));
-                    old_dummy_node.head = None;
-                    self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), old_dummy_node);
-
-                    self.release_lock(dummy_node_perm);
-                    return;
-
-
-
-
-                    // let mut dummy_node = self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), temp_dummy_node);
+                proof {
+                    new_dummy_token = current_locked_node.instance.borrow().delete_tail_after_dummy_node(delete_data, old_dummy_node_token.get(), deleted_tail_token.get(), witness.get());
                 }
 
-                // Otherwise we are deleting between dummy and 
-                else {
-
-                }
+                old_dummy_node.map_token = Some(Tracked(new_dummy_token));
+                old_dummy_node.head = None;
+                self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), old_dummy_node);
 
                 self.release_lock(dummy_node_perm);
-                current_locked_node.release_lock(current_node_perm);
                 return;
             }
-            
 
-            // And release the dummy node lock
-            self.release_lock(dummy_node_perm);
+            // Otherwise we are deleting between dummy and normal
+            else {
+                let temp_dummy_node = DummyNode {
+                    head: None,
+                    map_token: None
+                };
+
+                let mut old_dummy_node = self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), temp_dummy_node);
+                let old_dummy_node_token = old_dummy_node.map_token.unwrap();
+
+                let temp_current_node = Node {
+                    data: 0,
+                    next_node: None,
+                    map_token: None
+                };
+
+                let mut deleted_current_node = current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), temp_current_node);
+                let deleted_current_token = deleted_current_node.map_token.unwrap();
+                
+
+                let tracked new_dummy_token;
+                let next_node_data = deleted_current_node.next_node.as_ref().unwrap().data_view.get();
+
+                proof {
+                    new_dummy_token = current_locked_node.instance.borrow().delete_inbetween_dummy_and_normal(delete_data, next_node_data, old_dummy_node_token.get(), deleted_current_token.get(), witness.get());
+                }
+
+                old_dummy_node.map_token = Some(Tracked(new_dummy_token));
+                old_dummy_node.head = deleted_current_node.next_node;
+                self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), old_dummy_node);
+
+                self.release_lock(dummy_node_perm);
+                return;
+            }
+        }
+        
+        // We do not want to delete the first node.
+        // It is not possible for there to be no more nodes - we have a witness
+        if (current_node_view.next_node.as_ref().is_none()) {
+            return;
+        }
+        // We can release the dummy node lock.
+        self.release_lock(dummy_node_perm);
+        // and begin our traversal:
+        loop 
+            invariant
+                self.wf(),
+                current_locked_node.wf(),
+                current_locked_node.instance == self.instance,
+                current_node_perm.id() == current_locked_node.cell.id(),
+                NodeData::Node(current_node_perm.value().data) == current_locked_node.data_view,
+                current_node_perm.value().map_token.is_some(),
+                current_node_perm.value().map_token.unwrap()@.instance_id() == current_locked_node.instance@.id(),
+                current_node_perm.value().map_token.unwrap()@.key() == NodeData::Node(current_node_perm.value().data),
+                (current_node_perm.value().map_token.unwrap()@.value().is_none() <==> current_node_perm.value().next_node.is_none()), 
+                (current_node_perm.value().map_token.unwrap()@.value().is_some() ==> 
+                    (
+                        current_node_perm.value().next_node.unwrap().wf() &&
+                        current_node_perm.value().next_node.unwrap().instance == current_locked_node.instance &&
+                        NodeData::Node(current_node_perm.value().data) < current_node_perm.value().next_node.unwrap().data_view &&
+                        current_node_perm.value().next_node.unwrap().data_view == current_node_perm.value().map_token.unwrap()@.value().unwrap()
+                    )
+                ),
+                current_node_view.next_node.is_some(),
+                current_node_data == current_node_perm.value().data,
+                witness.element() != current_locked_node.data_view,
+        {
+            let mut next_locked_node = current_node_view.next_node.as_ref().unwrap().clone();
+            let mut next_node_perm = next_locked_node.acquire_lock();
+            let next_node_view = next_locked_node.cell.borrow(Tracked(next_node_perm.borrow_mut()));
+            let next_node_data = next_locked_node.data_view.get();
         }
 
     }
