@@ -269,45 +269,24 @@ tokenized_state_machine!{
         }
 
         #[inductive(delete_tail_after_dummy_node)]
-        fn delete_tail_after_dummy_node_inductive(pre: Self, post: Self, delete_node: u32) { 
-            assert(pre.initialized);
-            assert(post.initialized);
-            assert(post.nodes.dom().contains(NodeData::Dummy));
-            assert(!post.nodes.is_empty());
-            assert(post.node_witnesses.contains(NodeData::Dummy));
-            assert(!post.node_witnesses.is_empty());
-
-            assert(forall |i: u32| #![auto] post.node_witnesses.contains(NodeData::Node(i)) <==> post.nodes.dom().contains(NodeData::Node(i)));
-            assert(!post.initialized <==> post.nodes.is_empty());
-            assert(!post.initialized <==> post.node_witnesses.is_empty());
-            assert(post.initialized <==> post.nodes.dom().contains(NodeData::Dummy));
-            assert(post.initialized <==> post.node_witnesses.contains(NodeData::Dummy));
-            assert(post.initialized && post.nodes[NodeData::Dummy] == None::<NodeData>);
-
-
-            assert(pre.nodes[NodeData::Dummy] == Some(NodeData::Node(delete_node)));
-            assert(pre.nodes[NodeData::Node(delete_node)] == None::<NodeData>);
-
-            assert(forall |i: u32| #![auto] i != delete_node
-                ==> !pre.nodes.dom().contains(NodeData::Node(i)));
-                    
+        fn delete_tail_after_dummy_node_inductive(pre: Self, post: Self, delete_node: u32) {                     
             assert(post.nodes =~= Map::empty().insert(NodeData::Dummy, None::<NodeData>)) by {
                 
                 assert(forall |i: u32| #![auto] 
                     !post.nodes.dom().contains(NodeData::Node(i)));
 
-                assert(forall |node_data: NodeData| #![auto] 
-                    node_data != NodeData::Dummy ==> !post.nodes.dom().contains(node_data));
-                
-                // assert()
+                assert forall |node_data: NodeData| post.nodes.dom().contains(node_data) 
+                    implies node_data == NodeData::Dummy by {
+                        match node_data {
+                            NodeData::Dummy => {}
+                            NodeData::Node(i) => {
+                                assert(!post.nodes.dom().contains(NodeData::Node(i)))
+                            }
+                        }
+                    }
             
                 assert(post.nodes[NodeData::Dummy] == None::<NodeData>);
-                // assert(post.nodes.dom().len() == 1);
             };
-            // assert(
-            //     (post.initialized && post.nodes[NodeData::Dummy] == None::<NodeData>) <==> 
-            //     (post.nodes =~= Map::empty().insert(NodeData::Dummy, None::<NodeData>))
-            // );
         }
 
         #[inductive(delete_tail_node_after_normal_node)]
