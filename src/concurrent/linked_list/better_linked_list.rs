@@ -20,16 +20,6 @@ pub enum NodeData {
 }
 
 impl NodeData {
-    pub fn clone(&self) -> (cloned: Self) 
-        ensures
-            *self == cloned
-    {
-        match self {
-            NodeData::Dummy => NodeData::Dummy,
-            NodeData::Node(i) => NodeData::Node(*i),
-        }
-    }
-
     pub fn get(&self) -> (value: u32) 
         requires
             *self != NodeData::Dummy
@@ -300,19 +290,6 @@ tokenized_state_machine!{
         #[inductive(delete_inbetween_normal_and_normal)]
         fn delete_inbetween_normal_and_normal_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32, upper_node: u32) {
         }
-
-        property!{
-            no_token_exists(first_node_data: u32) {
-                have nodes >= [NodeData::Dummy => Some(NodeData::Node(first_node_data))];
-                birds_eye let n = pre.nodes;
-
-                assert(
-                    forall |data: u32| #![auto]
-                        data < first_node_data ==>
-                            !n.dom().contains(NodeData::Node(data))
-                );
-            }
-        }
     }
 }
 
@@ -456,6 +433,7 @@ struct_with_invariants!{
         pub cell: pcell::PCell<Node>,
         pub instance: Tracked<machine::Instance>,
         pub data_view: NodeData,
+
     }
 
     pub open spec fn wf(&self) -> bool {
@@ -478,12 +456,6 @@ struct_with_invariants!{
                             points_to.value().next_node.unwrap().data_view == points_to.value().map_token.unwrap()@.value().unwrap()
                         )
                     )
-                    // points_to.value().map_token.unwrap().value().is_none() ==> (
-                    //     !(
-                    //         exists |ln: LockedNode| #![auto]
-                    //             ln.wf() && data_view < ln.data_view && ln.instance == instance
-                    //     )
-                    // )
                 }
             }
         }
@@ -1111,32 +1083,6 @@ impl LinkedList {
 
     }
 }
-
-// proof fn no_node_exists(data: NodeData, token: &machine::nodes, instance: machine::Instance) 
-//     requires
-//         token.instance_id() == instance.id(),
-//         token.value().is_some(),
-//         data != NodeData::Dummy,
-//         token.key() < data,
-//         data < token.value().unwrap(),
-//     ensures
-//         forall |locked_node: LockedNode| #![auto] 
-//             (locked_node.wf() && locked_node.instance == instance)
-//                 ==> locked_node.data_view != data
-// {
-// }
-
-// proof fn no_token_exists(data: NodeData, token: &machine::nodes, instance: machine::Instance) 
-//     requires
-//         token.instance_id() == instance.id(),
-//         token.value().is_some(),
-//         data != NodeData::Dummy,
-//         token.key() < data,
-//         data < token.value().unwrap(),
-//     ensures
-//         !(exists |token: machine::nodes| token.key() == data)
-// {
-// }
 
 fn main() {
     let linked_list = Arc::new(LinkedList::new());
