@@ -53,6 +53,15 @@ impl NodeData {
             (NodeData::Data(a), NodeData::Data(b)) => a < b,
         }
     }
+
+    pub open spec fn spec_gt(self, other: Self) -> bool {
+        match (self, other) {
+            (NodeData::Nil, NodeData::Nil) => false,
+            (NodeData::Nil, _) => false,
+            (_, NodeData::Nil) => true,
+            (NodeData::Data(a), NodeData::Data(b)) => a > b,
+        }
+    }
 }
 
 tokenized_state_machine!{
@@ -157,7 +166,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            add_nil_node()
+            create_nil()
             {   
                 require(!pre.initialized);
                 update initialized = true;
@@ -166,7 +175,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            add_to_nil_tail(new_tail: u32)
+            insert_at_nil_tail(new_tail: u32)
             {   
                 remove nodes -= [NodeData::Nil => None];
                 add nodes += [NodeData::Nil => Some(NodeData::Data(new_tail))];
@@ -175,7 +184,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            add_to_node_tail(current_tail: u32, new_tail: u32)
+            insert_at_cons_tail(current_tail: u32, new_tail: u32)
             {   
                 require(new_tail > current_tail);
                 remove nodes -= [NodeData::Data(current_tail) => None];
@@ -185,7 +194,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            insert_node_inbetween_normal_and_normal(lower_node: u32, upper_node: u32, new_node: u32)
+            insert_inbetween_cons_and_cons(lower_node: u32, upper_node: u32, new_node: u32)
             {   
                 require(lower_node < new_node);
                 require(new_node < upper_node);
@@ -196,7 +205,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            insert_node_inbetween_nil_and_normal(upper_node: u32, new_node: u32)
+            insert_inbetween_nil_and_cons(upper_node: u32, new_node: u32)
             {   
                 require(new_node < upper_node);
                 remove nodes -= [NodeData::Nil => Some(NodeData::Data(upper_node))];
@@ -206,7 +215,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            delete_tail_after_nil_node(delete_node: u32)
+            delete_cons_tail_after_nil(delete_node: u32)
             {   
                 remove nodes -= [NodeData::Nil => Some(NodeData::Data(delete_node))];
                 remove nodes -= [NodeData::Data(delete_node) => None];
@@ -215,7 +224,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            delete_tail_node_after_normal_node(delete_node: u32, lower_node: u32)
+            delete_cons_tail_node_after_cons(delete_node: u32, lower_node: u32)
             {   
                 remove nodes -= [NodeData::Data(lower_node) => Some(NodeData::Data(delete_node))];
                 remove nodes -= [NodeData::Data(delete_node) => None];
@@ -224,7 +233,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            delete_inbetween_nil_and_normal(delete_node: u32, upper_node: u32)
+            delete_inbetween_nil_and_cons(delete_node: u32, upper_node: u32)
             {   
                 remove nodes -= [NodeData::Nil => Some(NodeData::Data(delete_node))];
                 remove nodes -= [NodeData::Data(delete_node) => Some(NodeData::Data(upper_node))];
@@ -233,7 +242,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            delete_inbetween_normal_and_normal(delete_node: u32, lower_node: u32, upper_node: u32)
+            delete_inbetween_cons_and_cons(delete_node: u32, lower_node: u32, upper_node: u32)
             {   
                 remove nodes -= [NodeData::Data(lower_node) => Some(NodeData::Data(delete_node))];
                 remove nodes -= [NodeData::Data(delete_node) => Some(NodeData::Data(upper_node))];
@@ -245,28 +254,28 @@ tokenized_state_machine!{
         fn initialize_inductive(post: Self) { 
         }
 
-        #[inductive(add_nil_node)]
-        fn add_nil_node_inductive(pre: Self, post: Self) { 
+        #[inductive(create_nil)]
+        fn create_nil_inductive(pre: Self, post: Self) { 
         }
 
-        #[inductive(add_to_nil_tail)]
-        fn add_to_nil_tail_inductive(pre: Self, post: Self, new_tail: u32) { 
+        #[inductive(insert_at_nil_tail)]
+        fn insert_at_nil_tail_inductive(pre: Self, post: Self, new_tail: u32) { 
         }
 
-        #[inductive(add_to_node_tail)]
-        fn add_to_node_tail_inductive(pre: Self, post: Self, current_tail: u32, new_tail: u32) { 
+        #[inductive(insert_at_cons_tail)]
+        fn insert_at_cons_tail_inductive(pre: Self, post: Self, current_tail: u32, new_tail: u32) { 
         }
 
-        #[inductive(insert_node_inbetween_normal_and_normal)]
-        fn insert_node_inbetween_normal_and_normal_inductive(pre: Self, post: Self, lower_node: u32, upper_node: u32, new_node: u32) { 
+        #[inductive(insert_inbetween_cons_and_cons)]
+        fn insert_inbetween_cons_and_cons_inductive(pre: Self, post: Self, lower_node: u32, upper_node: u32, new_node: u32) { 
         }
 
-        #[inductive(insert_node_inbetween_nil_and_normal)]
-        fn insert_node_inbetween_nil_and_normal_inductive(pre: Self, post: Self, upper_node: u32, new_node: u32) { 
+        #[inductive(insert_inbetween_nil_and_cons)]
+        fn insert_inbetween_nil_and_cons_inductive(pre: Self, post: Self, upper_node: u32, new_node: u32) { 
         }
 
-        #[inductive(delete_tail_after_nil_node)]
-        fn delete_tail_after_nil_node_inductive(pre: Self, post: Self, delete_node: u32) {                     
+        #[inductive(delete_cons_tail_after_nil)]
+        fn delete_cons_tail_after_nil_inductive(pre: Self, post: Self, delete_node: u32) {                     
             assert(post.nodes =~= Map::empty().insert(NodeData::Nil, None::<NodeData>)) by {
                 
                 assert(forall |i: u32| #![auto] 
@@ -286,17 +295,17 @@ tokenized_state_machine!{
             };
         }
 
-        #[inductive(delete_tail_node_after_normal_node)]
-        fn delete_tail_node_after_normal_node_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32) { 
+        #[inductive(delete_cons_tail_node_after_cons)]
+        fn delete_cons_tail_node_after_cons_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32) { 
         }
 
-        #[inductive(delete_inbetween_nil_and_normal)]
-        fn delete_inbetween_nil_and_normal_inductive(pre: Self, post: Self, delete_node: u32, upper_node: u32) {
+        #[inductive(delete_inbetween_nil_and_cons)]
+        fn delete_inbetween_nil_and_cons_inductive(pre: Self, post: Self, delete_node: u32, upper_node: u32) {
             assert(post.initialized <==> post.nodes.dom().contains(NodeData::Nil));
         }
 
-        #[inductive(delete_inbetween_normal_and_normal)]
-        fn delete_inbetween_normal_and_normal_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32, upper_node: u32) {
+        #[inductive(delete_inbetween_cons_and_cons)]
+        fn delete_inbetween_cons_and_cons_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32, upper_node: u32) {
         }
 
         property!{
@@ -389,7 +398,7 @@ impl LockedNil {
 
         let tracked map_token;
         proof {
-            map_token = instance.add_nil_node(&mut initialized)
+            map_token = instance.create_nil(&mut initialized)
         };
 
         let node = Nil { cdr: None::<Arc<LockedCons>>, map_token: Tracked(map_token) };
@@ -473,7 +482,7 @@ struct_with_invariants!{
         atomic: AtomicBool<_, Option<pcell::PointsTo<Cons>>, _>,
         cell: pcell::PCell<Cons>,
         instance: Tracked<machine::Instance>,
-        view_car: NodeData,
+        view_car: Ghost<NodeData>,
     }
 
     pub closed spec fn wf(&self) -> bool {
@@ -491,7 +500,7 @@ struct_with_invariants!{
                         (
                             points_to.value().cdr.unwrap().wf() &&
                             points_to.value().cdr.unwrap().view_instance() == instance &&
-                            NodeData::Data(points_to.value().car) < points_to.value().cdr.unwrap().view_car() &&
+                            points_to.value().cdr.unwrap().view_car() > NodeData::Data(points_to.value().car) &&
                             points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
                         )
                     )
@@ -508,10 +517,9 @@ impl LockedCons {
             map_token@.key() == NodeData::Data(car),
             map_token@.value().is_none() <==> cdr.is_none(),
             map_token@.value().is_some() ==> (
-                cdr.is_some() &&
                 cdr.unwrap().wf() &&
                 cdr.unwrap().view_instance() == instance &&
-                NodeData::Data(car) < cdr.unwrap().view_car() &&
+                cdr.unwrap().view_car() > NodeData::Data(car) &&
                 cdr.unwrap().view_car() == map_token@.value().unwrap()
             ),
         ensures 
@@ -519,7 +527,7 @@ impl LockedCons {
             new_node.instance == instance,
             new_node.view_car == NodeData::Data(car),
     {   
-        let view_car = NodeData::Data(car);
+        let view_car = Ghost(NodeData::Data(car));
         let node = Cons { car, cdr, map_token: map_token };
         let (cell, Tracked(perm)) = pcell::PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, instance, view_car)), false, Tracked(Some(perm)));
@@ -539,7 +547,7 @@ impl LockedCons {
                 (
                     points_to.value().cdr.unwrap().wf() &&
                     points_to.value().cdr.unwrap().view_instance() == self.instance &&
-                    NodeData::Data(points_to.value().car) < points_to.value().cdr.unwrap().view_car() &&
+                    points_to.value().cdr.unwrap().view_car() > NodeData::Data(points_to.value().car) &&
                     points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
                 )
             ),
@@ -573,7 +581,7 @@ impl LockedCons {
                 (
                     points_to.value().cdr.unwrap().wf() &&
                     points_to.value().cdr.unwrap().view_instance() == self.instance &&
-                    NodeData::Data(points_to.value().car) < points_to.value().cdr.unwrap().view_car() &&
+                    points_to.value().cdr.unwrap().view_car() > NodeData::Data(points_to.value().car) &&
                     points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
                 )
             ),
@@ -590,7 +598,7 @@ impl LockedCons {
 
     pub closed spec fn view_car(&self) -> (view_car: NodeData)
     {
-        self.view_car
+        self.view_car@
     }
 
     pub closed spec fn view_instance(&self) -> (instance: machine::Instance)
