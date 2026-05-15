@@ -11,8 +11,10 @@ use vstd::{
     thread::*,
     pervasive::*, 
     prelude::*, 
-    cell::pcell,
-    set::*
+    cell::pcell_maybe_uninit::{
+        PCell,
+        PointsTo
+    },
 };
 
 verus! {
@@ -194,23 +196,23 @@ tokenized_state_machine!{
         }
 
         transition!{
-            insert_inbetween_cons_and_cons(lower_node: u32, upper_node: u32, new_node: u32)
+            insert_inbetween_cons_and_cons(lower_car: u32, insert_car: u32, upper_car: u32)
             {   
-                require(lower_node < new_node);
-                require(new_node < upper_node);
-                remove nodes -= [NodeData::Data(lower_node) => Some(NodeData::Data(upper_node))];
-                add nodes += [NodeData::Data(lower_node) => Some(NodeData::Data(new_node))];
-                add nodes += [NodeData::Data(new_node) => Some(NodeData::Data(upper_node))];
+                require(lower_car < insert_car);
+                require(insert_car < upper_car);
+                remove nodes -= [NodeData::Data(lower_car) => Some(NodeData::Data(upper_car))];
+                add nodes += [NodeData::Data(lower_car) => Some(NodeData::Data(insert_car))];
+                add nodes += [NodeData::Data(insert_car) => Some(NodeData::Data(upper_car))];
             }
         }
 
         transition!{
-            insert_inbetween_nil_and_cons(upper_node: u32, new_node: u32)
+            insert_inbetween_nil_and_cons(insert_car: u32, upper_car: u32)
             {   
-                require(new_node < upper_node);
-                remove nodes -= [NodeData::Nil => Some(NodeData::Data(upper_node))];
-                add nodes += [NodeData::Nil => Some(NodeData::Data(new_node))];
-                add nodes += [NodeData::Data(new_node) => Some(NodeData::Data(upper_node))];
+                require(insert_car < upper_car);
+                remove nodes -= [NodeData::Nil => Some(NodeData::Data(upper_car))];
+                add nodes += [NodeData::Nil => Some(NodeData::Data(insert_car))];
+                add nodes += [NodeData::Data(insert_car) => Some(NodeData::Data(upper_car))];
             }
         }
 
@@ -224,29 +226,29 @@ tokenized_state_machine!{
         }
 
         transition!{
-            delete_cons_tail_node_after_cons(delete_node: u32, lower_node: u32)
+            delete_cons_tail_node_after_cons(lower_car: u32, delete_node: u32)
             {   
-                remove nodes -= [NodeData::Data(lower_node) => Some(NodeData::Data(delete_node))];
+                remove nodes -= [NodeData::Data(lower_car) => Some(NodeData::Data(delete_node))];
                 remove nodes -= [NodeData::Data(delete_node) => None];
-                add nodes += [NodeData::Data(lower_node) => None];
+                add nodes += [NodeData::Data(lower_car) => None];
             }
         }
 
         transition!{
-            delete_inbetween_nil_and_cons(delete_node: u32, upper_node: u32)
+            delete_inbetween_nil_and_cons(delete_node: u32, upper_car: u32)
             {   
                 remove nodes -= [NodeData::Nil => Some(NodeData::Data(delete_node))];
-                remove nodes -= [NodeData::Data(delete_node) => Some(NodeData::Data(upper_node))];
-                add nodes += [NodeData::Nil => Some(NodeData::Data(upper_node))];
+                remove nodes -= [NodeData::Data(delete_node) => Some(NodeData::Data(upper_car))];
+                add nodes += [NodeData::Nil => Some(NodeData::Data(upper_car))];
             }
         }
 
         transition!{
-            delete_inbetween_cons_and_cons(delete_node: u32, lower_node: u32, upper_node: u32)
+            delete_inbetween_cons_and_cons(lower_car: u32, delete_node: u32, upper_car: u32)
             {   
-                remove nodes -= [NodeData::Data(lower_node) => Some(NodeData::Data(delete_node))];
-                remove nodes -= [NodeData::Data(delete_node) => Some(NodeData::Data(upper_node))];
-                add nodes += [NodeData::Data(lower_node) => Some(NodeData::Data(upper_node))];
+                remove nodes -= [NodeData::Data(lower_car) => Some(NodeData::Data(delete_node))];
+                remove nodes -= [NodeData::Data(delete_node) => Some(NodeData::Data(upper_car))];
+                add nodes += [NodeData::Data(lower_car) => Some(NodeData::Data(upper_car))];
             }
         }
 
@@ -267,11 +269,11 @@ tokenized_state_machine!{
         }
 
         #[inductive(insert_inbetween_cons_and_cons)]
-        fn insert_inbetween_cons_and_cons_inductive(pre: Self, post: Self, lower_node: u32, upper_node: u32, new_node: u32) { 
+        fn insert_inbetween_cons_and_cons_inductive(pre: Self, post: Self, lower_car: u32, insert_car: u32, upper_car: u32) { 
         }
 
         #[inductive(insert_inbetween_nil_and_cons)]
-        fn insert_inbetween_nil_and_cons_inductive(pre: Self, post: Self, upper_node: u32, new_node: u32) { 
+        fn insert_inbetween_nil_and_cons_inductive(pre: Self, post: Self, insert_car: u32, upper_car: u32) { 
         }
 
         #[inductive(delete_cons_tail_after_nil)]
@@ -296,56 +298,31 @@ tokenized_state_machine!{
         }
 
         #[inductive(delete_cons_tail_node_after_cons)]
-        fn delete_cons_tail_node_after_cons_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32) { 
+        fn delete_cons_tail_node_after_cons_inductive(pre: Self, post: Self, lower_car: u32, delete_node: u32) { 
         }
 
         #[inductive(delete_inbetween_nil_and_cons)]
-        fn delete_inbetween_nil_and_cons_inductive(pre: Self, post: Self, delete_node: u32, upper_node: u32) {
+        fn delete_inbetween_nil_and_cons_inductive(pre: Self, post: Self, delete_node: u32, upper_car: u32) {
             assert(post.initialized <==> post.nodes.dom().contains(NodeData::Nil));
         }
 
         #[inductive(delete_inbetween_cons_and_cons)]
-        fn delete_inbetween_cons_and_cons_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32, upper_node: u32) {
+        fn delete_inbetween_cons_and_cons_inductive(pre: Self, post: Self, lower_car: u32, delete_node: u32, upper_car: u32) {
         }
 
-        property!{
-            no_smaller_token_exists(first_node_data: u32) {
-                have nodes >= [NodeData::Nil => Some(NodeData::Data(first_node_data))];
-                birds_eye let n = pre.nodes;
+        // property!{
+        //     correct_cons(locked_cons_perm: Tracked<PointsTo<Cons>>, insert_car: u32) {
+        //         // require();
+                
+        //         // have nodes >= [NodeData::Nil => Some(NodeData::Data(first_node_data))];
+        //         birds_eye let tokens = pre.nodes;
 
-                assert(
-                    forall |data: u32| #![auto]
-                        data < first_node_data ==>
-                            !n.dom().contains(NodeData::Data(data))
-                );
-            }
-        }
 
-        property!{
-            no_larger_token_exists(last_node_data: u32) {
-                have nodes >= [NodeData::Data(last_node_data) => None];
-                birds_eye let n = pre.nodes;
-
-                assert(
-                    forall |data: u32| #![auto]
-                        data > last_node_data ==>
-                            !n.dom().contains(NodeData::Data(data))
-                );
-            }
-        }
-
-        property!{
-            no_inbetween_token_exists(lower_node_data: u32, upper_node_data: u32) {
-                have nodes >= [NodeData::Data(lower_node_data) => Some(NodeData::Data(upper_node_data))];
-                birds_eye let n = pre.nodes;
-
-                assert(
-                    forall |data: u32| #![auto]
-                        (lower_node_data < data && data < upper_node_data) ==>
-                            !n.dom().contains(NodeData::Data(data))
-                );
-            }
-        }
+        //         // assert(
+        //         //     tokens.dom().contains(locked_cons_perm.value().map_token)
+        //         // );
+        //     }
+        // }
     }
 }
 
@@ -356,18 +333,19 @@ pub struct Nil {
 
 struct_with_invariants!{
     pub struct LockedNil {
-        atomic: AtomicBool<_, Option<pcell::PointsTo<Nil>>, _>,
-        cell: pcell::PCell<Nil>,
+        atomic: AtomicBool<_, Option<PointsTo<Nil>>, _>,
+        cell: PCell<Nil>,
         instance: Tracked<machine::Instance>,
     }
 
     spec fn wf(&self) -> bool 
     {
-        invariant on atomic with (cell, instance) is (v: bool, g: Option<pcell::PointsTo<Nil>>) {
+        invariant on atomic with (cell, instance) is (v: bool, g: Option<PointsTo<Nil>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
                     v == false &&
+                    points_to.is_init() &&
                     points_to.id() == cell.id() &&
                     points_to.value().map_token@.instance_id() == instance@.id() && 
                     points_to.value().map_token@.key() == NodeData::Nil &&
@@ -388,7 +366,7 @@ struct_with_invariants!{
 impl LockedNil {
     fn new() -> (locked_nil: Self)
         ensures 
-            locked_nil.wf()
+            locked_nil.wf(),
     {
         let tracked (
             Tracked(instance),
@@ -402,7 +380,7 @@ impl LockedNil {
         };
 
         let node = Nil { cdr: None::<Arc<LockedCons>>, map_token: Tracked(map_token) };
-        let (cell, Tracked(perm)) = pcell::PCell::new(node);
+        let (cell, Tracked(perm)) = PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, Tracked(instance))), false, Tracked(Some(perm)));
 
         Self { 
@@ -412,10 +390,11 @@ impl LockedNil {
         }
     }
 
-    fn acquire_lock(&self) -> (points_to: Tracked<pcell::PointsTo<Nil>>)
+    fn acquire_lock(&self) -> (points_to: Tracked<PointsTo<Nil>>)
         requires 
             self.wf(),
         ensures 
+            points_to.is_init(),
             points_to.id() == self.cell.id(),
             points_to.value().map_token@.instance_id() == self.instance@.id(), 
             points_to.value().map_token@.key() == NodeData::Nil,
@@ -445,9 +424,10 @@ impl LockedNil {
         }
     }
 
-    fn release_lock(&self, points_to: Tracked<pcell::PointsTo<Nil>>)
+    fn release_lock(&self, points_to: Tracked<PointsTo<Nil>>)
         requires
             self.wf(),
+            points_to.is_init(),
             points_to.id() == self.cell.id(),
             points_to.value().map_token@.instance_id() == self.instance@.id(), 
             points_to.value().map_token@.key() == NodeData::Nil,
@@ -469,6 +449,101 @@ impl LockedNil {
             }
         );
     }
+
+    fn insert(self: Arc<Self>, insert_car: u32)
+        requires
+            self.wf()
+        ensures
+            self.wf()
+    {
+        // Acquire the lock for the nil node, and view the data inside (without taking)
+        let mut nil_perm = self.acquire_lock();
+        let nil_view = self.cell.borrow(Tracked(nil_perm.borrow_mut()));
+
+        // If the nil cdr is none, then we must insert here - at the tail
+        if (nil_view.cdr.is_none()) {
+
+            let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
+
+            let tracked token_tuple;
+            let tracked updated_nil_token;
+            let tracked cons_token;
+
+            proof {
+                token_tuple = self.instance.borrow().insert_at_nil_tail(insert_car, nil.map_token.get());
+                updated_nil_token = token_tuple.0.get();
+                cons_token = token_tuple.1.get();
+            }
+
+            let locked_cons = LockedCons::new(
+                insert_car, 
+                Tracked(cons_token), 
+                None::<Arc<LockedCons>>, 
+                self.instance.clone()
+            );
+
+            nil.cdr = Some(Arc::new(locked_cons));
+            nil.map_token = Tracked(updated_nil_token);
+            self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
+
+            self.release_lock(nil_perm);
+            return;
+        } 
+        else {
+            // We check if we need to insert inbetween Nil and the first Cons
+            let first_locked_cons = nil_view.cdr.as_ref().unwrap().clone();
+            let mut first_cons_perm = first_locked_cons.acquire_lock();
+            let first_cons_view = first_locked_cons.cell.borrow(Tracked(first_cons_perm.borrow_mut()));
+
+            // If a Cons with this value already exists:
+            if (insert_car == first_cons_view.car) {
+                // Return early and do nothing - the Cons exists.
+                self.release_lock(nil_perm);
+                first_locked_cons.release_lock(first_cons_perm);
+                return;
+            }
+
+            // If the first Cons cdr is larger than the insert cdr:
+            if (insert_car < first_cons_view.car) {
+
+                // Then we insert inbetween Nil and first Cons
+                let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
+
+                let tracked token_tuple;
+                let tracked updated_nil_token;
+                let tracked cons_token;
+
+                proof {
+                    token_tuple = self.instance.borrow().insert_inbetween_nil_and_cons(insert_car, first_cons_view.car, nil.map_token.get());
+                    updated_nil_token = token_tuple.0.get();
+                    cons_token = token_tuple.1.get();
+                }
+
+                let locked_cons = LockedCons::new(
+                    insert_car, 
+                    Tracked(cons_token), 
+                    Some(first_locked_cons.clone()), 
+                    self.instance.clone()
+                );
+
+                nil.cdr = Some(Arc::new(locked_cons));
+                nil.map_token = Tracked(updated_nil_token);
+
+                self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
+
+                self.release_lock(nil_perm);
+                first_locked_cons.release_lock(first_cons_perm);
+                return;
+            }
+
+            // If we have reached here, we may release the nil lock:
+            self.release_lock(nil_perm);
+
+            // Any insert from here onwards will not involve nil - 
+            // we may delegate the insert to a chain of LockedCons
+            first_locked_cons.insert(first_cons_perm, insert_car);
+        }
+    }
 }
 
 pub struct Cons {
@@ -479,18 +554,19 @@ pub struct Cons {
 
 struct_with_invariants!{
     pub struct LockedCons {
-        atomic: AtomicBool<_, Option<pcell::PointsTo<Cons>>, _>,
-        cell: pcell::PCell<Cons>,
+        atomic: AtomicBool<_, Option<PointsTo<Cons>>, _>,
+        cell: PCell<Cons>,
         instance: Tracked<machine::Instance>,
         view_car: Ghost<NodeData>,
     }
 
     pub closed spec fn wf(&self) -> bool {
-        invariant on atomic with (cell, instance, view_car) is (v: bool, g: Option<pcell::PointsTo<Cons>>) {
+        invariant on atomic with (cell, instance, view_car) is (v: bool, g: Option<PointsTo<Cons>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
                     v == false &&
+                    points_to.is_init() &&
                     points_to.id() == cell.id() &&
                     NodeData::Data(points_to.value().car) == view_car &&
                     points_to.value().map_token@.instance_id() == instance@.id() &&
@@ -511,7 +587,7 @@ struct_with_invariants!{
 }
 
 impl LockedCons {
-    fn new(car: u32, map_token: Tracked<machine::nodes>, cdr: Option<Arc<LockedCons>>, instance: Tracked<machine::Instance>) -> (new_node: Self)
+    fn new(car: u32, map_token: Tracked<machine::nodes>, cdr: Option<Arc<LockedCons>>, instance: Tracked<machine::Instance>) -> (new_cons: Self)
         requires
             map_token@.instance_id() == instance@.id(),
             map_token@.key() == NodeData::Data(car),
@@ -523,21 +599,22 @@ impl LockedCons {
                 cdr.unwrap().view_car() == map_token@.value().unwrap()
             ),
         ensures 
-            new_node.wf(),
-            new_node.instance == instance,
-            new_node.view_car == NodeData::Data(car),
+            new_cons.wf(),
+            new_cons.instance == instance,
+            new_cons.view_car == NodeData::Data(car),
     {   
         let view_car = Ghost(NodeData::Data(car));
         let node = Cons { car, cdr, map_token: map_token };
-        let (cell, Tracked(perm)) = pcell::PCell::new(node);
+        let (cell, Tracked(perm)) = PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, instance, view_car)), false, Tracked(Some(perm)));
         Self { atomic, cell, instance, view_car }
     }
 
-    fn acquire_lock(&self) -> (points_to: Tracked<pcell::PointsTo<Cons>>)
+    fn acquire_lock(&self) -> (points_to: Tracked<PointsTo<Cons>>)
         requires 
             self.wf(),
         ensures 
+            points_to.is_init(),
             points_to.id() == self.cell.id(),
             NodeData::Data(points_to.value().car) == self.view_car,
             points_to.value().map_token@.instance_id() == self.instance@.id(),
@@ -569,9 +646,10 @@ impl LockedCons {
         }
     }
 
-    fn release_lock(&self, points_to: Tracked<pcell::PointsTo<Cons>>)
+    fn release_lock(&self, points_to: Tracked<PointsTo<Cons>>)
         requires
             self.wf(),
+            points_to.is_init(),
             points_to.id() == self.cell.id(),
             NodeData::Data(points_to.value().car) == self.view_car,
             points_to.value().map_token@.instance_id() == self.instance@.id(),
@@ -605,15 +683,165 @@ impl LockedCons {
     {
         self.instance@
     }
+
+    fn insert(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, insert_car: u32)
+        requires
+            self.wf(),
+            current_cons_perm.is_init(),
+            current_cons_perm.id() == self.cell.id(),
+            NodeData::Data(current_cons_perm.value().car) == self.view_car,
+            current_cons_perm.value().map_token@.instance_id() == self.instance@.id(),
+            current_cons_perm.value().map_token@.key() == NodeData::Data(current_cons_perm.value().car),
+            (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
+            (current_cons_perm.value().map_token@.value().is_some() ==> 
+                (
+                    current_cons_perm.value().cdr.unwrap().wf() &&
+                    current_cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    current_cons_perm.value().cdr.unwrap().view_car() > NodeData::Data(current_cons_perm.value().car) &&
+                    current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
+                )
+            ),
+            current_cons_perm.value().car < insert_car
+        ensures
+            self.wf()
+    {
+        let mut current_locked_cons = self;
+        loop 
+            invariant
+                self.wf(),
+                current_locked_cons.wf(),
+                current_cons_perm.is_init(),
+                current_cons_perm.id() == current_locked_cons.cell.id(),
+                NodeData::Data(current_cons_perm.value().car) == current_locked_cons.view_car,
+                current_cons_perm.value().map_token@.instance_id() == current_locked_cons.instance@.id(),
+                current_cons_perm.value().map_token@.key() == NodeData::Data(current_cons_perm.value().car),
+                (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
+                (current_cons_perm.value().map_token@.value().is_some() ==> 
+                    (
+                        current_cons_perm.value().cdr.unwrap().wf() &&
+                        current_cons_perm.value().cdr.unwrap().view_instance() == current_locked_cons.instance &&
+                        current_cons_perm.value().cdr.unwrap().view_car() > NodeData::Data(current_cons_perm.value().car) &&
+                        current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
+                    )
+                ),
+                current_cons_perm.value().car < insert_car
+            decreases
+                insert_car - current_cons_perm.value().car
+        {
+            let mut current_cons_view = current_locked_cons.cell.borrow(Tracked(current_cons_perm.borrow_mut()));
+
+            // If there is no next LockedCons, then we must insert at the tail after a Cons
+            if (current_cons_view.cdr.is_none()) {
+
+                let mut old_tail_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+
+                let tracked token_tuple;
+                let tracked updated_old_tail_cons_token;
+                let tracked new_tail_cons_token;
+
+                proof {
+                    token_tuple = current_locked_cons.instance.borrow().insert_at_cons_tail(current_cons_view.car, insert_car, old_tail_cons.map_token.get());
+                    updated_old_tail_cons_token = token_tuple.0.get();
+                    new_tail_cons_token = token_tuple.1.get();
+                }
+
+                let locked_cons = LockedCons::new(
+                    insert_car, 
+                    Tracked(new_tail_cons_token), 
+                    None::<Arc<LockedCons>>, 
+                    current_locked_cons.instance.clone()
+                );
+
+                old_tail_cons.cdr = Some(Arc::new(locked_cons));
+                old_tail_cons.map_token = Tracked(updated_old_tail_cons_token);
+
+                current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), old_tail_cons);
+                current_locked_cons.release_lock(current_cons_perm);
+
+                return;
+            } 
+            // Otherwise, there is another LockedCons
+            else {
+                // Acquire the permissions to access the Cons:
+                let next_locked_cons = current_cons_view.cdr.as_ref().unwrap().clone();
+                let mut next_cons_perm = next_locked_cons.acquire_lock();
+                let next_cons_view = next_locked_cons.cell.borrow(Tracked(next_cons_perm.borrow_mut()));
+
+                // If a Cons with this value already exists:
+                if (insert_car == next_cons_view.car) {
+                    // Return early and do nothing - the Cons exists.
+                    current_locked_cons.release_lock(current_cons_perm);
+                    next_locked_cons.release_lock(next_cons_perm);
+                    return;
+                }
+
+                // If the next Cons cdr is larger than the insert cdr:
+                if (insert_car < next_cons_view.car) {
+
+                    // Then we insert inbetween Cons and Cons
+                    let mut current_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+
+                    let tracked token_tuple;
+                    let tracked updated_cons_token;
+                    let tracked new_cons_token;
+
+                    proof {
+                        token_tuple = current_locked_cons.instance.borrow().insert_inbetween_cons_and_cons(current_cons_view.car, insert_car, next_cons_view.car, current_cons.map_token.get());
+                        updated_cons_token = token_tuple.0.get();
+                        new_cons_token = token_tuple.1.get();
+                    }
+
+                    let locked_cons = LockedCons::new(
+                        insert_car, 
+                        Tracked(new_cons_token), 
+                        Some(next_locked_cons.clone()), 
+                        current_locked_cons.instance.clone()
+                    );
+
+                    current_cons.cdr = Some(Arc::new(locked_cons));
+                    current_cons.map_token = Tracked(updated_cons_token);
+
+                    current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), current_cons);
+
+                    current_locked_cons.release_lock(current_cons_perm);
+                    next_locked_cons.release_lock(next_cons_perm);
+                    return;
+                }
+
+                // Otherwise, we give up the previous lock, and loop again
+                current_locked_cons.release_lock(current_cons_perm);
+
+                current_locked_cons = next_locked_cons;
+                current_cons_perm = next_cons_perm;
+            }
+        }
+    }
 }
 
 pub struct LinkedList {
-    pub locked_nil: LockedNil,
+    pub locked_nil: Arc<LockedNil>,
 }
 
 impl LinkedList {
-    pub fn new() -> Self {
-        Self { locked_nil: LockedNil::new() }
+    pub closed spec fn wf(&self) -> bool
+    {
+        self.locked_nil.wf()
+    }
+
+    pub fn new() -> (linked_list: Self)
+        ensures
+            linked_list.wf()
+    {
+        Self { locked_nil: Arc::new(LockedNil::new()) }
+    }
+
+    pub fn insert(self, data: u32) 
+        requires
+            self.wf()
+        ensures
+            self.wf()
+    {
+        self.locked_nil.insert(data);
     }
 }
 
