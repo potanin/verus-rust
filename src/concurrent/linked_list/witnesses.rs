@@ -19,20 +19,88 @@ use vstd::{
 verus! {
 
 pub enum Operation {
-    Insert(u32),
-    InsertFail(u32),
-    Delete(u32),
-    DeleteFail(u32)
+    Insert(NodeData),
+    InsertFail(NodeData),
+    Delete(NodeData),
+    DeleteFail(NodeData)
+}
+
+pub enum NodeData {
+    Nil,
+    CAR(u32)
+}
+
+impl NodeData {
+    pub fn clone(&self) -> (cloned: Self) 
+        ensures
+            *self == cloned
+    {
+        match self {
+            NodeData::Nil => NodeData::Nil,
+            NodeData::CAR(i) => NodeData::CAR(*i),
+        }
+    }
+
+    pub fn get(&self) -> (value: u32) 
+        requires
+            *self != NodeData::Nil
+        ensures
+            *self == NodeData::CAR(value)
+    {
+        match self {
+            NodeData::CAR(i) => *i,
+            _ => 0
+        }
+    }
+
+    pub open spec fn spec_lt(self, other: Self) -> bool {
+        match (self, other) {
+            (NodeData::Nil, NodeData::Nil) => false,
+            (NodeData::Nil, _) => true,
+            (_, NodeData::Nil) => false,
+            (NodeData::CAR(a), NodeData::CAR(b)) => a < b,
+        }
+    }
+
+    pub open spec fn spec_le(self, other: Self) -> bool {
+        match (self, other) {
+            (NodeData::Nil, NodeData::Nil) => true,
+            (NodeData::Nil, _) => true,
+            (_, NodeData::Nil) => false,
+            (NodeData::CAR(a), NodeData::CAR(b)) => a <= b,
+        }
+    }
+
+    pub open spec fn spec_gt(self, other: Self) -> bool {
+        match (self, other) {
+            (NodeData::Nil, NodeData::Nil) => false,
+            (NodeData::Nil, _) => false,
+            (_, NodeData::Nil) => true,
+            (NodeData::CAR(a), NodeData::CAR(b)) => a > b,
+        }
+    }
+
+    pub open spec fn spec_ge(self, other: Self) -> bool {
+        match (self, other) {
+            (NodeData::Nil, NodeData::Nil) => true,
+            (NodeData::Nil, _) => false,
+            (_, NodeData::Nil) => true,
+            (NodeData::CAR(a), NodeData::CAR(b)) => a >= b,
+        }
+    }
 }
 
 tokenized_state_machine!{
     machine {
         fields {
             #[sharding(map)]
-            pub operation_history: Map<nat, Operation>,
+            pub data_map: Map<NodeData, Option<NodeData>>,
+            
+            #[sharding(variable)]
+            pub initialized: bool,
 
-            // #[sharding(map)]
-            // pub list_representation: Map<u32, Option<u32>>,
+            #[sharding(map)]
+            pub operation_history: Map<nat, Operation>,
         }
 
         #[invariant]
@@ -41,104 +109,441 @@ tokenized_state_machine!{
             (forall |i: nat| i < self.operation_history.dom().len() <==> self.operation_history.dom().contains(i))
         }
 
+        #[invariant]
+        pub fn unique_inv(&self) -> bool {   
+            forall |i: NodeData, j: NodeData| #![auto] 
+                (
+                    self.data_map.dom().contains(i) &&
+                    self.data_map.dom().contains(j) &&
+                    self.data_map[i] == self.data_map[j]
+                ) ==>
+                (
+                    i == j
+                )      
+        }
+
+        #[invariant]
+        pub fn sorted_inv(&self) -> bool {
+            (
+                // If the map is initialised with real data
+                (self.initialized && self.data_map[NodeData::Nil].is_some()) ==> 
+                    (
+                        // Nil is the smallest CAR:
+                        // We don't need to prove that everything is larger than Nil
+                        // Since this is done in the spec_gt and spec_ge functions
+                        (
+                            forall |i: NodeData| #![auto] 
+                                (
+                                    i < self.data_map[NodeData::Nil].unwrap() &&
+                                    i != NodeData::Nil
+                                ) ==> ( 
+                                    !self.data_map.dom().contains(i)
+                                )
+                        
+                        ) &&
+                        (
+                            forall |i: NodeData| #![auto] 
+                                (
+                                    self.data_map.dom().contains(i) &&
+                                    i != NodeData::Nil
+                                ) ==> ( 
+                                    self.data_map[NodeData::Nil].unwrap() <= i
+                                )
+                        
+                        ) &&
+
+                        // Nothing larger than the tail CAR is in the list:
+                        // The domain containment is used for transitions
+                        // showing key absence
+                        (
+                            forall |i: NodeData| #![auto]
+                                (
+                                    self.data_map.dom().contains(i) && 
+                                    self.data_map[i] == None::<NodeData>
+                                ) ==> (
+                                    (
+                                        forall |j: NodeData| #![auto] 
+                                            i < j ==> !self.data_map.dom().contains(j)
+                                    ) && (
+                                        forall |j: NodeData| #![auto] 
+                                            self.data_map.dom().contains(j) ==> j <= i
+                                    )
+                                )
+                        ) &&
+
+                        // Everything in the list is sorted (smallest to largest).
+                        // Nodes either point to something strictly larger, or to None
+                        (
+                            forall |i: NodeData| #![auto] 
+                                (
+                                    self.data_map.dom().contains(i) && 
+                                    self.data_map[i] != None::<NodeData>
+                                ) ==> (
+                                    i < self.data_map[i].unwrap() &&
+                                    self.data_map.dom().contains(self.data_map[i].unwrap())
+                                )
+                        ) &&
+
+                        // // We must assert that for any mapping [a => c], there are no entries in the map
+                        // // with key b such that a < b < c. 
+                        (
+                            forall |i: NodeData| #![auto] 
+                                (
+                                    self.data_map.dom().contains(i) && 
+                                    self.data_map[i] != None::<NodeData>
+                                ) ==> (
+                                    forall |j: NodeData| #![auto] 
+                                        (
+                                            i < j && 
+                                            j < self.data_map[i].unwrap()
+                                        ) ==> (
+                                            !self.data_map.dom().contains(j)
+                                        )
+                                )
+                        )
+                    )
+            )
+        }
+
+        #[invariant]
+        pub fn main_inv(&self) -> bool {
+            // If the map is uninitialised, then it doesn't contain anything, not even the nil node (and vice versa)
+            (!self.initialized <==> self.data_map.is_empty()) &&
+
+            // If the map is initialised, then it must at least have the nil node:
+            // This case looks redundant, but I believe it will help the SMT solver.
+            (self.initialized <==> self.data_map.dom().contains(NodeData::Nil)) &&
+
+            // If the map contains [NodeData::Nil => None], then it can't contain anything else
+            (
+                (self.initialized && self.data_map[NodeData::Nil] == None::<NodeData>) <==> 
+                (self.data_map =~= Map::empty().insert(NodeData::Nil, None::<NodeData>))
+            )
+        }
+
         init!{
             initialize()
             {
+                init data_map = Map::empty();
+                init initialized = false;
                 init operation_history = Map::empty();
             }
         }
 
         transition!{
-            insert(lower: Option<u32>, insert: u32, upper: Option<u32>)
+            create_nil()
             {   
-                require(lower.is_some() ==> lower.unwrap() < insert);
-                require(upper.is_some() ==> insert < upper.unwrap());
-
-                // remove list_representation -= [lower => upper];
-                // add list_representation += [lower => Some(insert)];
-                // add list_representation += [insert => upper];
-
-                birds_eye let next_operation_index = pre.operation_history.dom().len();
-                add operation_history += [next_operation_index => Operation::Insert(insert)];
+                require(!pre.initialized);
+                update initialized = true;
+                add data_map += [NodeData::Nil => None];
             }
         }
 
         transition!{
-            insert_fail(insert: u32, car: u32)
+            insert(lower_car: NodeData, insert_car: NodeData, upper_car: Option<NodeData>)
             {   
-                require(insert == car);
-
-                // remove list_representation -= [lower => upper];
-                // add list_representation += [lower => Some(insert)];
-                // add list_representation += [insert => upper];
+                require(lower_car < insert_car);
+                require(upper_car.is_some() ==> insert_car < upper_car.unwrap());
+                remove data_map -= [lower_car => upper_car];
+                add data_map += [lower_car => Some(insert_car)];
+                add data_map += [insert_car => upper_car];
 
                 birds_eye let next_operation_index = pre.operation_history.dom().len();
-                add operation_history += [next_operation_index => Operation::InsertFail(insert)];
+                add operation_history += [next_operation_index => Operation::Insert(insert_car)];
             }
         }
 
         transition!{
-            delete(lower_car: Option<u32>, delete_car: u32, upper_car: Option<u32>)
+            delete(lower_car: NodeData, delete_car: NodeData, upper_car: Option<NodeData>)
             {   
-                require(lower_car.is_some() ==> lower_car.unwrap() < delete_car);
+                require(lower_car < delete_car);
                 require(upper_car.is_some() ==> delete_car < upper_car.unwrap());
-
-                // remove list_representation -= [lower => upper];
-                // add list_representation += [lower => Some(delete)];
-                // add list_representation += [delete => upper];
+                remove data_map -= [lower_car => Some(delete_car)];
+                remove data_map -= [delete_car => upper_car];
+                add data_map += [lower_car => upper_car];
 
                 birds_eye let next_operation_index = pre.operation_history.dom().len();
                 add operation_history += [next_operation_index => Operation::Delete(delete_car)];
             }
         }
 
-        transition!{
-            delete_fail(lower_car: Option<u32>, delete_car: u32, upper_car: Option<u32>)
-            {   
-                require(
-                    // List is empty
-                    (lower_car.is_none() && upper_car.is_none()) ||
-                    // Desired delete is smaller than everything in the list
-                    (lower_car.is_none() && upper_car.is_some() && delete_car < upper_car.unwrap()) ||
-                    // Desired delete is larger than everything in the list
-                    (lower_car.is_some() && upper_car.is_none() && lower_car.unwrap() < delete_car) ||
-                    // Desired delete is not larger or smaller, but just not present:
-                    (lower_car.is_some() && upper_car.is_some() && lower_car.unwrap() < delete_car && delete_car < upper_car.unwrap())
-                );
+        #[inductive(initialize)]
+        fn initialize_inductive(post: Self) {
+            assert(post.data_map.is_empty());
+        }
 
-                // remove list_representation -= [lower => upper];
-                // add list_representation += [lower => Some(insert)];
-                // add list_representation += [insert => upper];
+        #[inductive(create_nil)]
+        fn create_nil_inductive(pre: Self, post: Self) { 
+        }
 
-                birds_eye let next_operation_index = pre.operation_history.dom().len();
-                add operation_history += [next_operation_index => Operation::DeleteFail(delete_car)];
+        #[inductive(insert)]
+        fn insert_inductive(pre: Self, post: Self, lower_car: NodeData, insert_car: NodeData, upper_car: Option<NodeData>) {  
+            if (upper_car.is_some()) { 
+                let upper_car = upper_car.unwrap();      
+                assert
+                    forall |i: NodeData|
+                        (
+                            #[trigger] post.data_map.dom().contains(i) && 
+                            post.data_map[i] == None::<NodeData>
+                        ) 
+                    implies 
+                        (
+                            forall |j: NodeData| #![auto] 
+                                i < j ==> !post.data_map.dom().contains(j)
+                        ) && (
+                            forall |j: NodeData| #![auto] 
+                                post.data_map.dom().contains(j) ==> j <= i
+                        )
+                by {
+                    assert(insert_car < upper_car);
+                    assert(upper_car <= i);
+                };    
+
+                assert
+                    forall |i: NodeData| #![auto] 
+                        (
+                            #[trigger] post.data_map.dom().contains(i) && 
+                            post.data_map[i] != None::<NodeData>
+                        )
+                    implies
+                        forall |j: NodeData| #![auto] 
+                            (
+                                i < j && 
+                                j < post.data_map[i].unwrap()
+                            ) ==> (
+                                !post.data_map.dom().contains(j)
+                            )
+                by {
+                    if (i == lower_car) {
+                        assert(post.data_map[i] == Some(insert_car));
+                    } else if (i == insert_car) {
+                        assert(post.data_map[i] == Some(upper_car));
+                        // Removing this fails verification - I believe it is because of triggers
+                        assert(
+                            forall |j: NodeData| #![auto] 
+                                (
+                                    lower_car < j && 
+                                    j < upper_car
+                                ) ==> (
+                                    !pre.data_map.dom().contains(j)
+                                )
+                            );
+                    } else if (i < lower_car) {
+                        assert(pre.data_map[i].unwrap() < insert_car);
+                    } else {
+                        assert(lower_car < i);
+                    }
+                }
+            } else {
+                assert 
+                    forall |i: NodeData|
+                        #[trigger] (insert_car < i)
+                    implies
+                        !pre.data_map.dom().contains(i)
+                by {
+                    assert(lower_car < i);
+                }
+
+                assert
+                    forall |i: NodeData| 
+                        post.data_map.dom().contains(i)
+                    implies
+                        #[trigger] (i <= insert_car)
+                by {
+                    assert
+                        forall |i: NodeData| #![auto] 
+                            pre.data_map.dom().contains(i) 
+                        implies 
+                            #[trigger] (i < insert_car)
+                    by {
+                        assert(i <= lower_car);
+                        assert(lower_car < insert_car);
+                    };
+
+                    assert(pre.data_map.dom().contains(i) || i == insert_car);
+                    assert(i < insert_car || i == insert_car);
+                }
             }
         }
 
-        #[inductive(initialize)]
-        fn initialize_inductive(post: Self) {}
-
-        #[inductive(insert)]
-        fn insert_inductive(pre: Self, post: Self, lower: Option<u32>, insert: u32, upper: Option<u32>) {}
-
-        #[inductive(insert_fail)]
-        fn insert_fail_inductive(pre: Self, post: Self, insert: u32, car: u32) {}
-
         #[inductive(delete)]
-        fn delete_inductive(pre: Self, post: Self, lower_car: Option<u32>, delete_car: u32, upper_car: Option<u32>) {}
+        fn delete_inductive(pre: Self, post: Self, lower_car: NodeData, delete_car: NodeData, upper_car: Option<NodeData>) {
+            if (upper_car.is_some()) {
+                let upper_car = upper_car.unwrap();
+                if (lower_car == NodeData::Nil) {
+                    assert
+                        forall |i: NodeData|
+                            #[trigger] post.data_map.dom().contains(i)
+                        implies
+                            (
+                                i >= post.data_map[NodeData::Nil].unwrap() ||
+                                i == NodeData::Nil
+                            )
+                    by {
+                        if (i == NodeData::Nil) {
+                        } else {
+                            assert(lower_car < i);
 
-        #[inductive(delete_fail)]
-        fn delete_fail_inductive(pre: Self, post: Self, lower_car: Option<u32>, delete_car: u32, upper_car: Option<u32>) {}
+                            assert(
+                                forall |j: NodeData| #![auto]
+                                    (
+                                        lower_car < j &&
+                                        j < delete_car
+                                    ) ==> (
+                                        !post.data_map.dom().contains(j)
+                                    )
+                            );
+
+                            assert(
+                                forall |j: NodeData| #![auto]
+                                    (
+                                        delete_car < j &&
+                                        j < upper_car
+                                    ) ==> (
+                                        !post.data_map.dom().contains(j)
+                                    )
+                            );
+
+                            assert(
+                                forall |j: NodeData| #![auto]
+                                    (
+                                        lower_car < j &&
+                                        j < upper_car
+                                    ) ==> (
+                                        !post.data_map.dom().contains(j)
+                                    )
+                            );
+                        }
+                    }
+                }
+    
+                assert
+                    forall |i: NodeData| #![auto] 
+                        (
+                            post.data_map.dom().contains(i) && 
+                            #[trigger] post.data_map[i] != None::<NodeData>
+                        ) 
+                    implies
+                        forall |j: NodeData| #![auto] 
+                            (
+                                i < j && 
+                                j < post.data_map[i].unwrap()
+                            ) ==> (
+                                !post.data_map.dom().contains(j)
+                            )
+                by {
+                    assert(
+                        forall |j: NodeData| #![auto]
+                            (
+                                lower_car < j &&
+                                j < delete_car
+                            ) ==> (
+                                !pre.data_map.dom().contains(j)
+                            )
+                    );
+                        
+                    assert(
+                        forall |j: NodeData| #![auto]
+                            (
+                                delete_car < j &&
+                                j < upper_car
+                            ) ==> (
+                                !pre.data_map.dom().contains(j)
+                            )
+                    );
+                }
+            } else {
+                assert(post.data_map.dom().contains(NodeData::Nil));
+
+                if (lower_car == NodeData::Nil) {
+                    assert forall |i: NodeData|
+                        #[trigger] pre.data_map.dom().contains(i)
+                    implies
+                        i == lower_car || i == delete_car
+                    by {
+                        if i == lower_car {
+                        } else {
+                            assert(
+                                forall |j: NodeData| #![auto] 
+                                    pre.data_map.dom().contains(j) ==> j <= delete_car
+                            );
+
+                            assert(i <= delete_car);
+
+                            assert(
+                                forall |j: NodeData| #![auto]
+                                    (
+                                        lower_car < j &&
+                                        j < delete_car
+                                    ) ==> (
+                                        !pre.data_map.dom().contains(j)
+                                    )
+                            );
+
+                            assert(i == delete_car);
+                        }
+                    }
+                }
+
+                assert forall |i: NodeData|
+                    #[trigger] pre.data_map.dom().contains(i)
+                implies
+                    (i <= lower_car) || i == delete_car
+                by {
+                    assert(i <= delete_car);
+
+                    if i == delete_car {
+                    } else {
+                        assert(i < delete_car);
+
+                        assert(
+                            forall |j: NodeData| #![auto]
+                                (
+                                    lower_car < j &&
+                                    j < delete_car
+                                ) ==> (
+                                    !pre.data_map.dom().contains(j)
+                                )
+                        );
+                    }
+                }
+            }
+        }
+
+        property!{
+            delete_successful_empty_list(delete_car: NodeData) {
+                require(NodeData::Nil < delete_car);
+                have data_map >= [NodeData::Nil => None::<NodeData>];
+                birds_eye let map = pre.data_map;
+
+                assert(
+                    !map.dom().contains(delete_car)
+                );
+            }
+        }
+
+        property!{
+            delete_successful_car_not_in_list(lower_car: NodeData, delete_car: NodeData, upper_car: Option<NodeData>) {
+                require(lower_car < delete_car);
+                require(upper_car.is_some() ==> delete_car < upper_car.unwrap());
+                have data_map >= [lower_car => upper_car];
+                birds_eye let map = pre.data_map;
+
+                assert(
+                    !map.dom().contains(delete_car)
+                );
+            }
+        }
     }
 }
 
-
 pub struct Nil {
     pub cdr: Option<Arc<LockedCons>>,
+    pub map_token: Tracked<machine::data_map>
 }
 
 struct_with_invariants!{
-    struct LockedNil {
+    pub struct LockedNil {
         atomic: AtomicBool<_, Option<PointsTo<Nil>>, _>,
         cell: PCell<Nil>,
         instance: Tracked<machine::Instance>,
@@ -153,9 +558,15 @@ struct_with_invariants!{
                     v == false &&
                     points_to.is_init() &&
                     points_to.id() == cell.id() &&
-                    (points_to.value().cdr.is_some() ==> 
-                        points_to.value().cdr.unwrap().wf() &&
-                        points_to.value().cdr.unwrap().view_instance() == instance
+                    points_to.value().map_token@.instance_id() == instance@.id() && 
+                    points_to.value().map_token@.key() == NodeData::Nil &&
+                    (points_to.value().map_token@.value().is_none() <==> points_to.value().cdr.is_none()) && 
+                    (points_to.value().map_token@.value().is_some() ==> 
+                        (
+                            points_to.value().cdr.unwrap().wf() &&
+                            points_to.value().cdr.unwrap().view_instance() == instance &&
+                            points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
+                        )
                     )
                 }
             }
@@ -170,10 +581,17 @@ impl LockedNil {
     {
         let tracked (
             Tracked(instance),
+            Tracked(data_map),
+            Tracked(initialized),
             Tracked(operation_history)
         ) = machine::Instance::initialize();
 
-        let node = Nil { cdr: None::<Arc<LockedCons>> };
+        let tracked map_token;
+        proof {
+            map_token = instance.create_nil(&mut initialized)
+        };
+
+        let node = Nil { cdr: None::<Arc<LockedCons>>, map_token: Tracked(map_token) };
         let (cell, Tracked(perm)) = PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, Tracked(instance))), false, Tracked(Some(perm)));
         Self { 
@@ -183,15 +601,25 @@ impl LockedNil {
         }
     }
 
+    pub open spec fn view_car(&self) -> NodeData {
+        NodeData::Nil
+    }
+
     fn acquire_lock(&self) -> (points_to: Tracked<PointsTo<Nil>>)
         requires 
             self.wf(),
         ensures 
             points_to.is_init(),
             points_to.id() == self.cell.id(),
-            (points_to.value().cdr.is_some() ==> 
-                points_to.value().cdr.unwrap().wf() &&
-                points_to.value().cdr.unwrap().instance == self.instance
+            points_to.value().map_token@.instance_id() == self.instance@.id(), 
+            points_to.value().map_token@.key() == NodeData::Nil,
+            (points_to.value().map_token@.value().is_none() <==> points_to.value().cdr.is_none()), 
+            (points_to.value().map_token@.value().is_some() ==> 
+                (
+                    points_to.value().cdr.unwrap().wf() &&
+                    points_to.value().cdr.unwrap().view_instance() == self.instance &&
+                    points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
+                )
             ),
             self.wf()
     {
@@ -216,10 +644,16 @@ impl LockedNil {
             self.wf(),
             points_to.is_init(),
             points_to.id() == self.cell.id(),
-            (points_to.value().cdr.is_some() ==> 
-                points_to.value().cdr.unwrap().wf() &&
-                points_to.value().cdr.unwrap().instance == self.instance
-            ),
+            points_to.value().map_token@.instance_id() == self.instance@.id(), 
+            points_to.value().map_token@.key() == NodeData::Nil,
+            (points_to.value().map_token@.value().is_none() <==> points_to.value().cdr.is_none()), 
+            (points_to.value().map_token@.value().is_some() ==> 
+                (
+                    points_to.value().cdr.unwrap().wf() &&
+                    points_to.value().cdr.unwrap().view_instance() == self.instance &&
+                    points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
+                )
+            )
         ensures
             self.wf()
     {
@@ -231,118 +665,49 @@ impl LockedNil {
         );
     }
 
-    fn insert_with_no_cdr(&self, mut nil_perm: Tracked<PointsTo<Nil>>, insert_car: u32) -> ((updated_nil_perm, new_cons_perm, witness_token): (Tracked<PointsTo<Nil>>, Tracked<PointsTo<Cons>>, Tracked<machine::operation_history>))
-        requires
-            self.wf(),
-            nil_perm.is_init(),
-            nil_perm.id() == self.cell.id(),
-            nil_perm.value().cdr.is_none(),
-        ensures
-            self.wf(),
-            updated_nil_perm.is_init(),
-            new_cons_perm.is_init(),
-            updated_nil_perm.id() == self.cell.id(),
-            updated_nil_perm.value().cdr.is_some(),
-            updated_nil_perm.value().cdr.unwrap().wf(),
-            updated_nil_perm.value().cdr.unwrap().view_car == insert_car,
-            updated_nil_perm.value().cdr.unwrap().instance == self.instance,
-            new_cons_perm.id() == updated_nil_perm.value().cdr.unwrap().cell.id(),
-            new_cons_perm.value().cdr.is_none(),
-            new_cons_perm.value().car == insert_car,
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Insert(insert_car)
-    {
-        let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
-        let (locked_cons, locked_cons_perm) = LockedCons::new(
-            insert_car, 
-            None::<Arc<LockedCons>>,
-            self.instance.clone()
-        );
-
-        let tracked witness_token;
-        proof {
-            witness_token = self.instance.borrow().insert(None, insert_car, None).1.get();
-        }
-
-        nil.cdr = Some(Arc::new(locked_cons));
-        self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
-        return (nil_perm, locked_cons_perm, Tracked(witness_token))
-    }
-
-    fn insert_with_cdr(&self, mut nil_perm: Tracked<PointsTo<Nil>>, cons_perm: &Tracked<PointsTo<Cons>>, insert_car: u32) -> ((updated_nil_perm, new_cons_perm, witness_token): (Tracked<PointsTo<Nil>>, Tracked<PointsTo<Cons>>, Tracked<machine::operation_history>))
-        requires
-            self.wf(),
-            nil_perm.is_init(),
-            cons_perm.is_init(),
-            nil_perm.id() == self.cell.id(),
-            nil_perm.value().cdr.is_some(),
-            nil_perm.value().cdr.unwrap().wf(),
-            nil_perm.value().cdr.unwrap().view_car == cons_perm.value().car,
-            nil_perm.value().cdr.unwrap().instance == self.instance,
-            cons_perm.id() == nil_perm.value().cdr.unwrap().cell.id(),
-            cons_perm.value().cdr.is_some() ==> (
-                cons_perm.value().cdr.unwrap().wf() &&
-                cons_perm.value().cdr.unwrap().instance == self.instance
-            ),
-            insert_car < cons_perm.value().car
-        ensures
-            self.wf(),
-            updated_nil_perm.is_init(),
-            new_cons_perm.is_init(),
-            cons_perm.is_init(),
-            updated_nil_perm.id() == self.cell.id(),
-            updated_nil_perm.value().cdr.is_some(),
-            updated_nil_perm.value().cdr.unwrap().wf(),
-            updated_nil_perm.value().cdr.unwrap().view_car == insert_car,
-            updated_nil_perm.value().cdr.unwrap().instance == self.instance,
-            new_cons_perm.id() == updated_nil_perm.value().cdr.unwrap().cell.id(),
-            new_cons_perm.value().car == insert_car,
-            new_cons_perm.value().cdr.is_some(),
-            new_cons_perm.value().cdr.unwrap().wf(),
-            new_cons_perm.value().cdr.unwrap().view_car == cons_perm.value().car,
-            new_cons_perm.value().cdr.unwrap().instance == self.instance,
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Insert(insert_car)
-    {
-        let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
-
-        let (locked_cons, locked_cons_perm) = LockedCons::new(
-            insert_car, 
-            Some(nil.cdr.as_ref().unwrap().clone()),
-            self.instance.clone()
-        );
-
-        let tracked witness_token;
-        proof {
-            witness_token = self.instance.borrow().insert(None, insert_car, Some(cons_perm.value().car)).1.get();
-        }
-
-        nil.cdr = Some(Arc::new(locked_cons));
-        self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
-        return (nil_perm, locked_cons_perm, Tracked(witness_token))
-    }
-
-    fn insert(self: Arc<Self>, insert_car: u32) -> (witness_token: Tracked<machine::operation_history>)
+    fn insert(self: Arc<Self>, insert_car_raw: u32)
         requires
             self.wf()
         ensures
-            self.wf(),
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Insert(insert_car) || witness_token.value() == Operation::InsertFail(insert_car)
+            self.wf()
     {
         // Acquire the lock for the nil node, and view the data inside (without taking)
         let mut nil_perm = self.acquire_lock();
         let nil_view = self.cell.borrow(Tracked(nil_perm.borrow_mut()));
+        let insert_car = NodeData::CAR(insert_car_raw);
 
         // If the nil cdr is none, then we must insert here - at the tail
         if (nil_view.cdr.is_none()) {
-            let (mut updated_nil_perm, new_cons_perm, witness_token) = self.insert_with_no_cdr(nil_perm, insert_car);
-            let updated_nil_view = self.cell.borrow(Tracked(updated_nil_perm.borrow_mut()));
-            let new_locked_cons = updated_nil_view.cdr.as_ref().unwrap().clone();
 
-            self.release_lock(updated_nil_perm);
-            new_locked_cons.release_lock(new_cons_perm);
-            return witness_token;
+            let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
+
+            let tracked token_tuple;
+            let tracked updated_nil_token;
+            let tracked cons_token;
+
+            proof {
+                token_tuple = self.instance.borrow().insert(
+                    self.view_car(), 
+                    insert_car, 
+                    nil.map_token.value(), 
+                    nil.map_token.get()
+                );
+                updated_nil_token = token_tuple.0.get();
+                cons_token = token_tuple.1.get();
+            }
+
+            let locked_cons = LockedCons::new(
+                insert_car_raw, 
+                Tracked(cons_token), 
+                None::<Arc<LockedCons>>, 
+                self.instance.clone()
+            );
+
+            nil.cdr = Some(Arc::new(locked_cons));
+            nil.map_token = Tracked(updated_nil_token);
+            self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
+            self.release_lock(nil_perm);
+            return;
         } 
         else {
             // We check if we need to insert inbetween Nil and the first Cons
@@ -351,28 +716,49 @@ impl LockedNil {
             let first_cons_view = first_locked_cons.cell.borrow(Tracked(first_cons_perm.borrow_mut()));
 
             // If a Cons with this value already exists:
-            if (insert_car == first_cons_view.car) {
+            if (insert_car_raw == first_cons_view.car) {
                 // Return early and do nothing - the Cons exists.
-                let tracked witness_token;
-                proof {
-                    witness_token = self.instance.borrow().insert_fail(insert_car, first_cons_view.car).1.get();
-                }
                 self.release_lock(nil_perm);
                 first_locked_cons.release_lock(first_cons_perm);
-                return Tracked(witness_token);
+                return;
             }
 
             // If the first Cons cdr is larger than the insert cdr:
-            if (insert_car < first_cons_view.car) {
+            if (insert_car_raw < first_cons_view.car) {
 
-                let (mut updated_nil_perm, new_cons_perm, witness_token) = self.insert_with_cdr(nil_perm, &first_cons_perm, insert_car);
-                let updated_nil_view = self.cell.borrow(Tracked(updated_nil_perm.borrow_mut()));
-                let new_locked_cons = updated_nil_view.cdr.as_ref().unwrap().clone();
+                // Then we insert inbetween Nil and first Cons
+                let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
 
-                self.release_lock(updated_nil_perm);
-                new_locked_cons.release_lock(new_cons_perm);
+                let tracked token_tuple;
+                let tracked updated_nil_token;
+                let tracked cons_token;
+
+                proof {
+                    token_tuple = self.instance.borrow().insert(
+                        self.view_car(), 
+                        insert_car, 
+                        nil.map_token.value(), 
+                        nil.map_token.get()
+                    );
+                    updated_nil_token = token_tuple.0.get();
+                    cons_token = token_tuple.1.get();
+                }
+
+                let locked_cons = LockedCons::new(
+                    insert_car_raw, 
+                    Tracked(cons_token), 
+                    Some(first_locked_cons.clone()), 
+                    self.instance.clone()
+                );
+
+                nil.cdr = Some(Arc::new(locked_cons));
+                nil.map_token = Tracked(updated_nil_token);
+
+                self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
+
+                self.release_lock(nil_perm);
                 first_locked_cons.release_lock(first_cons_perm);
-                return witness_token;
+                return;
             }
 
             // If we have reached here, we may release the nil lock:
@@ -380,78 +766,28 @@ impl LockedNil {
 
             // Any insert from here onwards will not involve nil - 
             // we may delegate the insert to a chain of LockedCons
-            return first_locked_cons.insert(first_cons_perm, insert_car);
+            first_locked_cons.insert(first_cons_perm, insert_car_raw);
         }
     }
 
-    fn delete_first_cons(&self, mut nil_perm: Tracked<PointsTo<Nil>>, mut cons_perm: Tracked<PointsTo<Cons>>, delete_car: u32) -> ((updated_nil_perm, witness_token): (Tracked<PointsTo<Nil>>, Tracked<machine::operation_history>))
-        requires
-            self.wf(),
-            nil_perm.is_init(),
-            cons_perm.is_init(),
-            nil_perm.id() == self.cell.id(),
-            nil_perm.value().cdr.is_some(),
-            nil_perm.value().cdr.unwrap().wf(),
-            nil_perm.value().cdr.unwrap().view_car == cons_perm.value().car,
-            nil_perm.value().cdr.unwrap().instance == self.instance,
-            cons_perm.id() == nil_perm.value().cdr.unwrap().cell.id(),
-            cons_perm.value().cdr.is_some() ==> (
-                cons_perm.value().cdr.unwrap().wf() &&
-                cons_perm.value().cdr.unwrap().view_car > delete_car &&
-                cons_perm.value().cdr.unwrap().instance == self.instance
-            ),
-            delete_car == cons_perm.value().car,
-        ensures
-            self.wf(),
-            updated_nil_perm.is_init(),
-            updated_nil_perm.id() == self.cell.id(),
-            updated_nil_perm.value().cdr == cons_perm.value().cdr,
-            updated_nil_perm.value().cdr.is_some() ==> ( 
-                updated_nil_perm.value().cdr.unwrap().wf() &&
-                updated_nil_perm.value().cdr.unwrap().view_car > delete_car &&
-                updated_nil_perm.value().cdr.unwrap().instance == self.instance
-            ),
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Delete(delete_car)
-    {
-        let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
-        let delete_cons = nil.cdr.as_ref().unwrap().cell.take(Tracked(cons_perm.borrow_mut()));
-        let upper = match delete_cons.cdr {
-            Some(second_cons) => Some(second_cons.view_car()),
-            _ => None,
-        };
-        nil.cdr = delete_cons.cdr;
-        self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
-
-        let tracked witness_token;
-        proof {
-            witness_token = self.instance.borrow().delete(None, delete_car, upper).1.get()
-        }
-
-        return (nil_perm, Tracked(witness_token))
-    }
-
-    fn delete(self: Arc<Self>, delete_car: u32) -> (witness_token: Tracked<machine::operation_history>)
+    fn delete(self: Arc<Self>, delete_car_raw: u32)
         requires
             self.wf()
         ensures
-            self.wf(),
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Delete(delete_car) || witness_token.value() == Operation::DeleteFail(delete_car)
+            self.wf()
     {
+        let delete_car = NodeData::CAR(delete_car_raw);
         // Acquire the lock for the nil node, and view the data inside (without taking)
         let mut nil_perm = self.acquire_lock();
         let nil_view = self.cell.borrow(Tracked(nil_perm.borrow_mut()));
 
-        // If the nil cdr is none, then we are done, no nodes exist
+        // If the nil cdr is none, then we are done - no tokens exist ==> no nodes exist
         if (nil_view.cdr.is_none()) {
-            let tracked witness_token;
             proof {
-                witness_token = self.instance.borrow().delete_fail(None, delete_car, None).1.get();
+                self.instance.delete_successful_empty_list(delete_car, nil_view.map_token.borrow());
             }
-
             self.release_lock(nil_perm);
-            return Tracked(witness_token);
+            return;
         }
 
         // We check if we need to delete the first Cons (hence lower is LockedNil)
@@ -459,34 +795,72 @@ impl LockedNil {
         let mut first_cons_perm = first_locked_cons.acquire_lock();
         let first_cons_view = first_locked_cons.cell.borrow(Tracked(first_cons_perm.borrow_mut()));
 
-        // If the first car is larger than our delete, then we are done, all nodes are larger
-        if (delete_car < first_cons_view.car) {
-            let tracked witness_token;
+        // If the first car is larger than our delete, then we are done - no tokens exist ==> no nodes exist
+        if (delete_car_raw < first_cons_view.car) {
             proof {
-                witness_token = self.instance.borrow().delete_fail(None, delete_car, Some(first_cons_view.car)).1.get();
+                self.instance.delete_successful_car_not_in_list(
+                    self.view_car(), 
+                    delete_car, 
+                    nil_view.map_token.value(), 
+                    nil_view.map_token.borrow()
+                );
             }
             self.release_lock(nil_perm);
             first_locked_cons.release_lock(first_cons_perm);
-            return Tracked(witness_token);
+            return;
         }
 
         // Check if we are deleting the first LockedCons:
-        if (delete_car == first_cons_view.car) {
-            let (updated_nil_perm, witness_token) = self.delete_first_cons(nil_perm, first_cons_perm, delete_car);
-            self.release_lock(updated_nil_perm);
-            return witness_token;
+        if (delete_car_raw == first_cons_view.car) {
+            let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
+            let mut first_cons = first_locked_cons.cell.take(Tracked(first_cons_perm.borrow_mut()));
+
+            let tracked tuple;
+            let tracked updated_nil_token;
+            let tracked witness_token;
+
+            proof {
+                tuple = self.instance.borrow().delete(
+                    self.view_car(), 
+                    delete_car, 
+                    first_cons.map_token.value(), 
+                    nil.map_token.get(),
+                    first_cons.map_token.get()
+                );
+
+                updated_nil_token = tuple.0.get();
+                witness_token = tuple.2.get();
+            }
+
+            nil.map_token = Tracked(updated_nil_token);
+            nil.cdr = first_cons.cdr;
+
+            proof {
+                self.instance.delete_successful_car_not_in_list(
+                    self.view_car(), 
+                    delete_car, 
+                    nil.map_token.value(), 
+                    nil.map_token.borrow()
+                );
+            }
+
+            self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
+            self.release_lock(nil_perm);
+
+            return;
         }
         
         // We can release the dummy node lock.
         self.release_lock(nil_perm);
         // and begin our traversal:
-        return first_locked_cons.delete(first_cons_perm, delete_car);
+        first_locked_cons.delete(first_cons_perm, delete_car_raw);
     }
 }
 
 pub struct Cons {
     pub car: u32,
     pub cdr: Option<Arc<LockedCons>>,
+    pub map_token: Tracked<machine::data_map>
 }
 
 struct_with_invariants!{
@@ -494,23 +868,27 @@ struct_with_invariants!{
         atomic: AtomicBool<_, Option<PointsTo<Cons>>, _>,
         cell: PCell<Cons>,
         instance: Tracked<machine::Instance>,
-        view_car: Ghost<u32>,
+        view_car: Ghost<NodeData>,
     }
 
     pub closed spec fn wf(&self) -> bool {
-        invariant on atomic with (cell, view_car, instance) is (v: bool, g: Option<PointsTo<Cons>>) {
+        invariant on atomic with (cell, instance, view_car) is (v: bool, g: Option<PointsTo<Cons>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
                     v == false &&
                     points_to.is_init() &&
                     points_to.id() == cell.id() &&
-                    points_to.value().car == view_car &&
-                    (points_to.value().cdr.is_some() ==> 
+                    NodeData::CAR(points_to.value().car) == view_car &&
+                    points_to.value().map_token@.instance_id() == instance@.id() &&
+                    points_to.value().map_token@.key() == NodeData::CAR(points_to.value().car) &&
+                    (points_to.value().map_token@.value().is_none() <==> points_to.value().cdr.is_none()) && 
+                    (points_to.value().map_token@.value().is_some() ==> 
                         (
                             points_to.value().cdr.unwrap().wf() &&
-                            points_to.value().cdr.unwrap().view_car > points_to.value().car &&
-                            points_to.value().cdr.unwrap().instance == instance
+                            points_to.value().cdr.unwrap().view_instance() == instance &&
+                            points_to.value().cdr.unwrap().view_car() > NodeData::CAR(points_to.value().car) &&
+                            points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
                         )
                     )
                 }
@@ -520,27 +898,27 @@ struct_with_invariants!{
 }
 
 impl LockedCons {
-    fn new(car: u32, cdr: Option<Arc<LockedCons>>, instance: Tracked<machine::Instance>) -> ((cons, cons_perm): (Self, Tracked<PointsTo<Cons>>))
+    fn new(car: u32, map_token: Tracked<machine::data_map>, cdr: Option<Arc<LockedCons>>, instance: Tracked<machine::Instance>) -> (new_cons: Self)
         requires
-            cdr.is_some() ==> (
+            map_token@.instance_id() == instance@.id(),
+            map_token@.key() == NodeData::CAR(car),
+            map_token@.value().is_none() <==> cdr.is_none(),
+            map_token@.value().is_some() ==> (
                 cdr.unwrap().wf() &&
-                cdr.unwrap().view_car > car
-            )
+                cdr.unwrap().view_instance() == instance &&
+                cdr.unwrap().view_car() > NodeData::CAR(car) &&
+                cdr.unwrap().view_car() == map_token@.value().unwrap()
+            ),
         ensures 
-            cons.wf(),
-            cons.view_car == car,
-            cons.instance == instance,
-            cons_perm.is_init(),
-            cons_perm.id() == cons.cell.id(),
-            cons_perm.value().car == car,
-            cons_perm.value().cdr == cdr
+            new_cons.wf(),
+            new_cons.instance == instance,
+            new_cons.view_car == NodeData::CAR(car),
     {   
-        let view_car = Ghost(car);
-        let node = Cons { car, cdr };
+        let view_car = Ghost(NodeData::CAR(car));
+        let node = Cons { car, cdr, map_token: map_token };
         let (cell, Tracked(perm)) = PCell::new(node);
-        let atomic = AtomicBool::new(Ghost((cell, view_car, instance)), true, Tracked(None));
-        let cons = Self { atomic, cell, view_car, instance };
-        return (cons, Tracked(perm));
+        let atomic = AtomicBool::new(Ghost((cell, instance, view_car)), false, Tracked(Some(perm)));
+        Self { atomic, cell, instance, view_car }
     }
 
     fn acquire_lock(&self) -> (points_to: Tracked<PointsTo<Cons>>)
@@ -549,12 +927,16 @@ impl LockedCons {
         ensures 
             points_to.is_init(),
             points_to.id() == self.cell.id(),
-            points_to.value().car == self.view_car,
-            (points_to.value().cdr.is_some() ==> 
+            NodeData::CAR(points_to.value().car) == self.view_car,
+            points_to.value().map_token@.instance_id() == self.instance@.id(),
+            points_to.value().map_token@.key() == NodeData::CAR(points_to.value().car),
+            (points_to.value().map_token@.value().is_none() <==> points_to.value().cdr.is_none()), 
+            (points_to.value().map_token@.value().is_some() ==> 
                 (
                     points_to.value().cdr.unwrap().wf() &&
-                    points_to.value().cdr.unwrap().view_car > points_to.value().car &&
-                    points_to.value().cdr.unwrap().instance == self.instance
+                    points_to.value().cdr.unwrap().view_instance() == self.instance &&
+                    points_to.value().cdr.unwrap().view_car() > NodeData::CAR(points_to.value().car) &&
+                    points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
                 )
             ),
             self.wf()
@@ -580,14 +962,18 @@ impl LockedCons {
             self.wf(),
             points_to.is_init(),
             points_to.id() == self.cell.id(),
-            points_to.value().car == self.view_car,
-            (points_to.value().cdr.is_some() ==> 
+            NodeData::CAR(points_to.value().car) == self.view_car,
+            points_to.value().map_token@.instance_id() == self.instance@.id(),
+            points_to.value().map_token@.key() == NodeData::CAR(points_to.value().car),
+            (points_to.value().map_token@.value().is_none() <==> points_to.value().cdr.is_none()), 
+            (points_to.value().map_token@.value().is_some() ==> 
                 (
                     points_to.value().cdr.unwrap().wf() &&
-                    points_to.value().cdr.unwrap().view_car > points_to.value().car &&
-                    points_to.value().cdr.unwrap().instance == self.instance
+                    points_to.value().cdr.unwrap().view_instance() == self.instance &&
+                    points_to.value().cdr.unwrap().view_car() > NodeData::CAR(points_to.value().car) &&
+                    points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
                 )
-            )
+            ),
         ensures
             self.wf()
     {
@@ -599,164 +985,98 @@ impl LockedCons {
         );
     }
 
+    pub closed spec fn view_car(&self) -> (view_car: NodeData)
+    {
+        self.view_car@
+    }
+
     pub closed spec fn view_instance(&self) -> (instance: machine::Instance)
     {
         self.instance@
     }
 
-    pub fn view_car(&self) -> u32
-    {
-        self.view_car@
-    }
-
-    fn insert_with_cdr(&self, mut first_cons_perm: Tracked<PointsTo<Cons>>, second_cons_perm: &Tracked<PointsTo<Cons>>, insert_car: u32) -> ((updated_first_cons_perm, new_cons_perm, witness_token): (Tracked<PointsTo<Cons>>, Tracked<PointsTo<Cons>>, Tracked<machine::operation_history>))
-        requires
-            self.wf(),
-            first_cons_perm.is_init(),
-            second_cons_perm.is_init(),
-            first_cons_perm.id() == self.cell.id(),
-            first_cons_perm.value().car < insert_car,
-            first_cons_perm.value().cdr.is_some(),
-            first_cons_perm.value().cdr.unwrap().wf(),
-            first_cons_perm.value().cdr.unwrap().view_car == second_cons_perm.value().car,
-            first_cons_perm.value().cdr.unwrap().instance == self.instance,
-            second_cons_perm.id() == first_cons_perm.value().cdr.unwrap().cell.id(),
-            second_cons_perm.value().cdr.is_some() ==> (
-                second_cons_perm.value().cdr.unwrap().wf() &&
-                second_cons_perm.value().cdr.unwrap().instance == self.instance
-            ),
-            insert_car < second_cons_perm.value().car
-        ensures
-            self.wf(),
-            updated_first_cons_perm.is_init(),
-            new_cons_perm.is_init(),
-            second_cons_perm.is_init(),
-            updated_first_cons_perm.id() == self.cell.id(),
-            updated_first_cons_perm.value().car == first_cons_perm.value().car,
-            updated_first_cons_perm.value().cdr.is_some(),
-            updated_first_cons_perm.value().cdr.unwrap().wf(),
-            updated_first_cons_perm.value().cdr.unwrap().view_car == insert_car,
-            updated_first_cons_perm.value().cdr.unwrap().instance == self.instance,
-            new_cons_perm.id() == updated_first_cons_perm.value().cdr.unwrap().cell.id(),
-            new_cons_perm.value().car == insert_car,
-            new_cons_perm.value().cdr.is_some(),
-            new_cons_perm.value().cdr.unwrap().wf(),
-            new_cons_perm.value().cdr.unwrap().view_car == second_cons_perm.value().car,
-            new_cons_perm.value().cdr.unwrap().instance == self.instance,
-            second_cons_perm.id() == new_cons_perm.value().cdr.unwrap().cell.id(),
-            second_cons_perm.value().cdr.is_some() ==> (
-                second_cons_perm.value().cdr.unwrap().wf() &&
-                second_cons_perm.value().cdr.unwrap().instance == self.instance
-            ),
-            insert_car < second_cons_perm.value().car,
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Insert(insert_car)
-    {
-        let mut first_cons = self.cell.take(Tracked(first_cons_perm.borrow_mut()));
-
-        let (new_locked_cons, new_locked_cons_perm) = LockedCons::new(
-            insert_car, 
-            Some(first_cons.cdr.as_ref().unwrap().clone()),
-            self.instance.clone()
-        );
-
-        let tracked witness_token;
-        proof {
-            witness_token = self.instance.borrow().insert(Some(first_cons.car), insert_car, Some(second_cons_perm.value().car)).1.get();
-        }
-
-        first_cons.cdr = Some(Arc::new(new_locked_cons));
-        self.cell.put(Tracked(first_cons_perm.borrow_mut()), first_cons);
-        return (first_cons_perm, new_locked_cons_perm, Tracked(witness_token))
-    }
-
-    fn insert_with_no_cdr(&self, mut cons_perm: Tracked<PointsTo<Cons>>, insert_car: u32) -> ((updated_cons_perm, new_cons_perm, witness_token): (Tracked<PointsTo<Cons>>, Tracked<PointsTo<Cons>>, Tracked<machine::operation_history>))
-        requires
-            self.wf(),
-            cons_perm.is_init(),
-            cons_perm.id() == self.cell.id(),
-            cons_perm.value().car < insert_car,
-            cons_perm.value().cdr.is_none()
-        ensures
-            self.wf(),
-            updated_cons_perm.is_init(),
-            new_cons_perm.is_init(),
-            updated_cons_perm.id() == self.cell.id(),
-            updated_cons_perm.value().car == cons_perm.value().car,
-            updated_cons_perm.value().cdr.is_some(),
-            updated_cons_perm.value().cdr.unwrap().wf(),
-            updated_cons_perm.value().cdr.unwrap().view_car == insert_car,
-            updated_cons_perm.value().cdr.unwrap().instance == self.instance,
-            new_cons_perm.id() == updated_cons_perm.value().cdr.unwrap().cell.id(),
-            new_cons_perm.value().cdr.is_none(),
-            new_cons_perm.value().car == insert_car,
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Insert(insert_car)
-    {
-        let mut cons = self.cell.take(Tracked(cons_perm.borrow_mut()));
-        let (new_locked_cons, new_locked_cons_perm) = LockedCons::new(
-            insert_car, 
-            None::<Arc<LockedCons>>,
-            self.instance.clone()
-        );
-
-        let tracked witness_token;
-        proof {
-            witness_token = self.instance.borrow().insert(Some(cons.car), insert_car, None).1.get();
-        }
-
-
-        cons.cdr = Some(Arc::new(new_locked_cons));
-        self.cell.put(Tracked(cons_perm.borrow_mut()), cons);
-        return (cons_perm, new_locked_cons_perm, Tracked(witness_token))
-    }
-
-    fn insert(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, insert_car: u32) -> (witness_token: Tracked<machine::operation_history>)
+    fn insert(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, insert_car_raw: u32)
         requires
             self.wf(),
             current_cons_perm.is_init(),
             current_cons_perm.id() == self.cell.id(),
-            current_cons_perm.value().car == self.view_car,
-            current_cons_perm.value().cdr.is_some() ==> (
+            NodeData::CAR(current_cons_perm.value().car) == self.view_car,
+            current_cons_perm.value().map_token@.instance_id() == self.instance@.id(),
+            current_cons_perm.value().map_token@.key() == NodeData::CAR(current_cons_perm.value().car),
+            (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
+            (current_cons_perm.value().map_token@.value().is_some() ==> 
+                (
                     current_cons_perm.value().cdr.unwrap().wf() &&
-                    current_cons_perm.value().cdr.unwrap().view_car > current_cons_perm.value().car &&
-                    current_cons_perm.value().cdr.unwrap().instance == self.instance
+                    current_cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    current_cons_perm.value().cdr.unwrap().view_car() > NodeData::CAR(current_cons_perm.value().car) &&
+                    current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
+                )
             ),
-            current_cons_perm.value().car < insert_car
+            current_cons_perm.value().car < insert_car_raw
         ensures
-            self.wf(),
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Insert(insert_car) || witness_token.value() == Operation::InsertFail(insert_car)
+            self.wf()
     {
+        let insert_car = NodeData::CAR(insert_car_raw);
         let mut current_locked_cons = self;
         loop 
             invariant
                 self.wf(),
-                current_locked_cons.instance == self.instance,
                 current_locked_cons.wf(),
                 current_cons_perm.is_init(),
                 current_cons_perm.id() == current_locked_cons.cell.id(),
-                current_cons_perm.value().car == current_locked_cons.view_car,
-                current_cons_perm.value().cdr.is_some() ==> (
+                NodeData::CAR(current_cons_perm.value().car) == current_locked_cons.view_car,
+                current_cons_perm.value().map_token@.instance_id() == current_locked_cons.instance@.id(),
+                current_cons_perm.value().map_token@.key() == NodeData::CAR(current_cons_perm.value().car),
+                (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
+                (current_cons_perm.value().map_token@.value().is_some() ==> 
+                    (
                         current_cons_perm.value().cdr.unwrap().wf() &&
-                        current_cons_perm.value().cdr.unwrap().view_car > current_cons_perm.value().car &&
-                        current_cons_perm.value().cdr.unwrap().instance == self.instance
+                        current_cons_perm.value().cdr.unwrap().view_instance() == current_locked_cons.instance &&
+                        current_cons_perm.value().cdr.unwrap().view_car() > NodeData::CAR(current_cons_perm.value().car) &&
+                        current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
+                    )
                 ),
-                current_cons_perm.value().car < insert_car,
+                current_cons_perm.value().car < insert_car_raw,
+                insert_car == NodeData::CAR(insert_car_raw)
             decreases
-                insert_car - current_cons_perm.value().car
+                insert_car_raw - current_cons_perm.value().car
         {
             let mut current_cons_view = current_locked_cons.cell.borrow(Tracked(current_cons_perm.borrow_mut()));
 
             // If there is no next LockedCons, then we must insert at the tail after a Cons
             if (current_cons_view.cdr.is_none()) {
-                let (mut updated_current_cons_perm, new_cons_perm, witness_token) = current_locked_cons.insert_with_no_cdr(current_cons_perm, insert_car);
-                let updated_current_cons_view = current_locked_cons.cell.borrow(Tracked(updated_current_cons_perm.borrow_mut()));
-                let new_locked_cons = updated_current_cons_view.cdr.as_ref().unwrap().clone();
 
-                current_locked_cons.release_lock(updated_current_cons_perm);
-                new_locked_cons.release_lock(new_cons_perm);
-                return witness_token;
+                let mut old_tail_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+
+                let tracked token_tuple;
+                let tracked updated_old_tail_cons_token;
+                let tracked new_tail_cons_token;
+
+                proof {
+                    token_tuple = current_locked_cons.instance.borrow().insert(
+                        current_locked_cons.view_car(), 
+                        insert_car, 
+                        old_tail_cons.map_token.value(), 
+                        old_tail_cons.map_token.get()
+                    );
+                    updated_old_tail_cons_token = token_tuple.0.get();
+                    new_tail_cons_token = token_tuple.1.get();
+                }
+
+                let locked_cons = LockedCons::new(
+                    insert_car_raw, 
+                    Tracked(new_tail_cons_token), 
+                    None::<Arc<LockedCons>>, 
+                    current_locked_cons.instance.clone()
+                );
+
+                old_tail_cons.cdr = Some(Arc::new(locked_cons));
+                old_tail_cons.map_token = Tracked(updated_old_tail_cons_token);
+
+                current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), old_tail_cons);
+                current_locked_cons.release_lock(current_cons_perm);
+
+                return;
             } 
             // Otherwise, there is another LockedCons
             else {
@@ -766,29 +1086,49 @@ impl LockedCons {
                 let next_cons_view = next_locked_cons.cell.borrow(Tracked(next_cons_perm.borrow_mut()));
 
                 // If a Cons with this value already exists:
-                if (insert_car == next_cons_view.car) {
-
-                    let tracked witness_token;
-                    proof {
-                        witness_token = current_locked_cons.instance.borrow().insert_fail(insert_car, next_cons_view.car).1.get();
-                    }
+                if (insert_car_raw == next_cons_view.car) {
                     // Return early and do nothing - the Cons exists.
                     current_locked_cons.release_lock(current_cons_perm);
                     next_locked_cons.release_lock(next_cons_perm);
-                    return Tracked(witness_token);
+                    return;
                 }
 
                 // If the next Cons cdr is larger than the insert cdr:
-                if (insert_car < next_cons_view.car) {
-                    // Then we insert inbetween Cons and Cons
-                    let (mut updated_current_cons_perm, new_cons_perm, witness_token) = current_locked_cons.insert_with_cdr(current_cons_perm, &next_cons_perm, insert_car);
-                    let updated_current_cons_view = current_locked_cons.cell.borrow(Tracked(updated_current_cons_perm.borrow_mut()));
-                    let new_locked_cons = updated_current_cons_view.cdr.as_ref().unwrap().clone();
+                if (insert_car_raw < next_cons_view.car) {
 
-                    current_locked_cons.release_lock(updated_current_cons_perm);
-                    new_locked_cons.release_lock(new_cons_perm);
+                    // Then we insert inbetween Cons and Cons
+                    let mut current_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+
+                    let tracked token_tuple;
+                    let tracked updated_cons_token;
+                    let tracked new_cons_token;
+
+                    proof {
+                        token_tuple = current_locked_cons.instance.borrow().insert(
+                            current_locked_cons.view_car(), 
+                            insert_car, 
+                            current_cons.map_token.value(), 
+                            current_cons.map_token.get()
+                        );
+                        updated_cons_token = token_tuple.0.get();
+                        new_cons_token = token_tuple.1.get();
+                    }
+
+                    let locked_cons = LockedCons::new(
+                        insert_car_raw, 
+                        Tracked(new_cons_token), 
+                        Some(next_locked_cons.clone()), 
+                        current_locked_cons.instance.clone()
+                    );
+
+                    current_cons.cdr = Some(Arc::new(locked_cons));
+                    current_cons.map_token = Tracked(updated_cons_token);
+
+                    current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), current_cons);
+
+                    current_locked_cons.release_lock(current_cons_perm);
                     next_locked_cons.release_lock(next_cons_perm);
-                    return witness_token;
+                    return;
                 }
 
                 // Otherwise, we give up the previous lock, and loop again
@@ -800,104 +1140,67 @@ impl LockedCons {
         }
     }
 
-    fn delete_cons(&self, mut first_cons_perm: Tracked<PointsTo<Cons>>, mut delete_cons_perm: Tracked<PointsTo<Cons>>, delete_car: u32) -> ((updated_first_cons_perm, witness_token): (Tracked<PointsTo<Cons>>, Tracked<machine::operation_history>))
-        requires
-            self.wf(),
-            first_cons_perm.is_init(),
-            delete_cons_perm.is_init(),
-            first_cons_perm.id() == self.cell.id(),
-            first_cons_perm.value().car == self.view_car,
-            first_cons_perm.value().car < delete_car,
-            first_cons_perm.value().cdr.is_some(),
-            first_cons_perm.value().cdr.unwrap().wf(),
-            first_cons_perm.value().cdr.unwrap().view_car == delete_cons_perm.value().car,
-            first_cons_perm.value().cdr.unwrap().instance == self.instance,
-            delete_cons_perm.id() == first_cons_perm.value().cdr.unwrap().cell.id(),
-            delete_cons_perm.value().car == delete_car,
-            delete_cons_perm.value().cdr.is_some() ==> (
-                delete_cons_perm.value().cdr.unwrap().wf() &&
-                delete_cons_perm.value().cdr.unwrap().view_car > delete_car &&
-                delete_cons_perm.value().cdr.unwrap().instance == self.instance
-            ),
-        ensures
-            self.wf(),
-            updated_first_cons_perm.is_init(),
-            updated_first_cons_perm.id() == self.cell.id(),
-            self.view_car == updated_first_cons_perm.value().car,
-            updated_first_cons_perm.value().cdr == delete_cons_perm.value().cdr,
-            updated_first_cons_perm.value().cdr.is_some() ==> (
-                updated_first_cons_perm.value().cdr.unwrap().wf() &&
-                updated_first_cons_perm.value().cdr.unwrap().view_car > delete_car &&
-                updated_first_cons_perm.value().cdr.unwrap().instance == self.instance
-            ),
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Delete(delete_car)
-    {
-        let mut first_cons = self.cell.take(Tracked(first_cons_perm.borrow_mut()));
-        let delete_cons = first_cons.cdr.as_ref().unwrap().cell.take(Tracked(delete_cons_perm.borrow_mut()));
-        let upper = match delete_cons.cdr {
-            Some(second_cons) => Some(second_cons.view_car@),
-            _ => None,
-        };
-        first_cons.cdr = delete_cons.cdr;
-
-        let tracked witness_token;
-        proof {
-            witness_token = self.instance.borrow().delete(Some(first_cons.car), delete_car, upper).1.get();
-        }
-
-        self.cell.put(Tracked(first_cons_perm.borrow_mut()), first_cons);
-        return (first_cons_perm, Tracked(witness_token))
-    }
-
-    fn delete(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, delete_car: u32) -> (witness_token: Tracked<machine::operation_history>)
+    fn delete(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, delete_car_raw: u32)
         requires
             self.wf(),
             current_cons_perm.is_init(),
             current_cons_perm.id() == self.cell.id(),
-            current_cons_perm.value().car == self.view_car,
-            current_cons_perm.value().cdr.is_some() ==> 
+            NodeData::CAR(current_cons_perm.value().car) == self.view_car,
+            current_cons_perm.value().map_token@.instance_id() == self.instance@.id(),
+            current_cons_perm.value().map_token@.key() == NodeData::CAR(current_cons_perm.value().car),
+            (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
+            (current_cons_perm.value().map_token@.value().is_some() ==> 
                 (
                     current_cons_perm.value().cdr.unwrap().wf() &&
-                    current_cons_perm.value().cdr.unwrap().view_car > current_cons_perm.value().car &&
-                    current_cons_perm.value().cdr.unwrap().instance == self.instance
-                ),
-            current_cons_perm.value().car < delete_car
+                    current_cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    current_cons_perm.value().cdr.unwrap().view_car() > NodeData::CAR(current_cons_perm.value().car) &&
+                    current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
+                )
+            ),
+            current_cons_perm.value().car < delete_car_raw
         ensures
-            self.wf(),
-            witness_token.instance_id() == self.instance.id(),
-            witness_token.value() == Operation::Delete(delete_car) || witness_token.value() == Operation::DeleteFail(delete_car)
+            self.wf()
     {
+        let delete_car = NodeData::CAR(delete_car_raw);
         let mut current_locked_cons = self;
         loop 
             invariant
                 self.wf(),
                 current_locked_cons.wf(),
-                current_locked_cons.instance == self.instance,
                 current_cons_perm.is_init(),
                 current_cons_perm.id() == current_locked_cons.cell.id(),
-                current_cons_perm.value().car == current_locked_cons.view_car,
-                current_cons_perm.value().cdr.is_some() ==> 
+                NodeData::CAR(current_cons_perm.value().car) == current_locked_cons.view_car,
+                current_cons_perm.value().map_token@.instance_id() == current_locked_cons.instance@.id(),
+                current_cons_perm.value().map_token@.key() == NodeData::CAR(current_cons_perm.value().car),
+                (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
+                (current_cons_perm.value().map_token@.value().is_some() ==> 
                     (
                         current_cons_perm.value().cdr.unwrap().wf() &&
-                        current_cons_perm.value().cdr.unwrap().view_car > current_cons_perm.value().car &&
-                        current_cons_perm.value().cdr.unwrap().instance == self.instance
-                    ),
-                current_cons_perm.value().car < delete_car,
+                        current_cons_perm.value().cdr.unwrap().view_instance() == current_locked_cons.instance &&
+                        current_cons_perm.value().cdr.unwrap().view_car() > NodeData::CAR(current_cons_perm.value().car) &&
+                        current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
+                    )
+                ),
+                current_cons_perm.value().car < delete_car_raw,
+                delete_car == NodeData::CAR(delete_car_raw)
             decreases
-                delete_car - current_cons_perm.value().car
+                delete_car_raw - current_cons_perm.value().car
         {
             let mut current_cons_view = current_locked_cons.cell.borrow(Tracked(current_cons_perm.borrow_mut()));
 
             // If there is no next LockedCons, then we have reached the tail.
-            // If we have not deleted by now, then we are done, no nodes exist
+            // If we have not deleted by now, then we are done - no tokens exist ==> no nodes exist
             if (current_cons_view.cdr.is_none()) {
-                let tracked witness_token;
                 proof {
-                    witness_token = self.instance.borrow().delete_fail(Some(current_cons_view.car), delete_car, None).1.get();
+                    current_locked_cons.instance.delete_successful_car_not_in_list(
+                        current_locked_cons.view_car(), 
+                        delete_car, 
+                        current_cons_view.map_token.value(), 
+                        current_cons_view.map_token.borrow()
+                    );
                 }
                 current_locked_cons.release_lock(current_cons_perm);
-                return Tracked(witness_token);
+                return;
             } 
             // Otherwise, there is another LockedCons
             else {
@@ -909,23 +1212,58 @@ impl LockedCons {
                 // If the next car is larger than our delete, then we have:
                 // lower_car < delete_car < upper_car
                 // Which means that no node exist with value delete_car.
-                // We are done, no nodes exist
-                if (delete_car < next_cons_view.car) {
-                    let tracked witness_token;
+                // We are done - no tokens exist ==> no nodes exist
+                if (delete_car_raw < next_cons_view.car) {
                     proof {
-                        witness_token = self.instance.borrow().delete_fail(Some(current_cons_view.car), delete_car, Some(next_cons_view.car)).1.get();
+                        current_locked_cons.instance.delete_successful_car_not_in_list(
+                            current_locked_cons.view_car(), 
+                            delete_car, 
+                            current_cons_view.map_token.value(), 
+                            current_cons_view.map_token.borrow()
+                        );
                     }
                     current_locked_cons.release_lock(current_cons_perm);
                     next_locked_cons.release_lock(next_cons_perm);
-                    return Tracked(witness_token);
+                    return;
                 }
 
-                // Check if we are deleting the next LockedCons:
-                if (delete_car == next_cons_view.car) {
-                    let (updated_current_cons_perm, witness_token) = current_locked_cons.delete_cons(current_cons_perm, next_cons_perm, delete_car);
+                // Check if we are deleting the first LockedCons:
+                if (delete_car_raw == next_cons_view.car) {
+                    let mut current_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+                    let mut next_cons = next_locked_cons.cell.take(Tracked(next_cons_perm.borrow_mut()));
 
-                    current_locked_cons.release_lock(updated_current_cons_perm);
-                    return witness_token;
+                    let tracked tuple;
+                    let tracked updated_current_cons_token;
+                    let tracked witness_token;
+
+                    proof {
+                        tuple = current_locked_cons.instance.borrow().delete(
+                            current_locked_cons.view_car(), 
+                            delete_car, 
+                            next_cons.map_token.value(), 
+                            current_cons.map_token.get(),
+                            next_cons.map_token.get()
+                        );
+
+                        updated_current_cons_token = tuple.0.get();
+                        witness_token = tuple.2.get();
+                    }
+
+                    current_cons.map_token = Tracked(updated_current_cons_token);
+                    current_cons.cdr = next_cons.cdr;
+
+                    proof {
+                        current_locked_cons.instance.delete_successful_car_not_in_list(
+                            current_locked_cons.view_car(), 
+                            delete_car, 
+                            current_cons.map_token.value(), 
+                            current_cons.map_token.borrow()
+                        );
+                    }
+
+                    current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), current_cons);
+                    current_locked_cons.release_lock(current_cons_perm);
+                    return;
                 }
 
                 // Otherwise, we give up the previous lock, and loop again
@@ -938,7 +1276,7 @@ impl LockedCons {
 }
 
 pub struct LinkedList {
-    locked_nil: Arc<LockedNil>,
+    pub locked_nil: Arc<LockedNil>,
 }
 
 impl LinkedList {
