@@ -933,11 +933,16 @@ impl LockedNil {
         );
     }
 
-    fn insert(self: Arc<Self>, insert_car_raw: u32)
+    fn insert(self: Arc<Self>, insert_car_raw: u32) -> (witness_token: Tracked<machine::operation_history>)
         requires
             self.wf()
         ensures
-            self.wf()
+            self.wf(),
+            witness_token.instance_id() == self.instance.id(),
+            (
+                witness_token.value() == Operation::Insert(NodeData::CAR(insert_car_raw)) || 
+                witness_token.value() == Operation::InsertFail(NodeData::CAR(insert_car_raw))
+            )
     {
         // Acquire the lock for the nil node, and view the data inside (without taking)
         let mut nil_perm = self.acquire_lock();
@@ -952,6 +957,7 @@ impl LockedNil {
             let tracked token_tuple;
             let tracked updated_nil_token;
             let tracked cons_token;
+            let tracked witness_token;
 
             proof {
                 token_tuple = self.instance.borrow().insert(
@@ -962,6 +968,7 @@ impl LockedNil {
                 );
                 updated_nil_token = token_tuple.0.get();
                 cons_token = token_tuple.1.get();
+                witness_token = token_tuple.3.get();
             }
 
             let locked_cons = LockedCons::new(
@@ -975,7 +982,7 @@ impl LockedNil {
             nil.map_token = Tracked(updated_nil_token);
             self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
             self.release_lock(nil_perm);
-            return;
+            return Tracked(witness_token);
         } 
         else {
             // We check if we need to insert inbetween Nil and the first Cons
@@ -986,9 +993,21 @@ impl LockedNil {
             // If a Cons with this value already exists:
             if (insert_car_raw == first_cons_view.car) {
                 // Return early and do nothing - the Cons exists.
+                let tracked token_tuple;
+                let tracked witness_token;
+
+                proof {
+                    token_tuple = self.instance.borrow().insert_fail(
+                        insert_car, 
+                        first_cons_view.map_token.borrow()
+                    );
+
+                    witness_token = token_tuple.1.get();
+                }
+
                 self.release_lock(nil_perm);
                 first_locked_cons.release_lock(first_cons_perm);
-                return;
+                return Tracked(witness_token);
             }
 
             // If the first Cons cdr is larger than the insert cdr:
@@ -1000,6 +1019,7 @@ impl LockedNil {
                 let tracked token_tuple;
                 let tracked updated_nil_token;
                 let tracked cons_token;
+                let tracked witness_token;
 
                 proof {
                     token_tuple = self.instance.borrow().insert(
@@ -1010,6 +1030,7 @@ impl LockedNil {
                     );
                     updated_nil_token = token_tuple.0.get();
                     cons_token = token_tuple.1.get();
+                    witness_token = token_tuple.3.get();
                 }
 
                 let locked_cons = LockedCons::new(
@@ -1026,7 +1047,7 @@ impl LockedNil {
 
                 self.release_lock(nil_perm);
                 first_locked_cons.release_lock(first_cons_perm);
-                return;
+                return Tracked(witness_token);
             }
 
             // If we have reached here, we may release the nil lock:
@@ -1034,7 +1055,7 @@ impl LockedNil {
 
             // Any insert from here onwards will not involve nil - 
             // we may delegate the insert to a chain of LockedCons
-            first_locked_cons.insert(first_cons_perm, insert_car_raw);
+            return first_locked_cons.insert(first_cons_perm, insert_car_raw);
         }
     }
 
@@ -1263,7 +1284,7 @@ impl LockedCons {
         self.instance@
     }
 
-    fn insert(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, insert_car_raw: u32)
+    fn insert(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, insert_car_raw: u32) -> (witness_token: Tracked<machine::operation_history>)
         requires
             self.wf(),
             current_cons_perm.is_init(),
@@ -1282,7 +1303,12 @@ impl LockedCons {
             ),
             current_cons_perm.value().car < insert_car_raw
         ensures
-            self.wf()
+            self.wf(),
+            witness_token.instance_id() == self.instance.id(),
+            (
+                witness_token.value() == Operation::Insert(NodeData::CAR(insert_car_raw)) || 
+                witness_token.value() == Operation::InsertFail(NodeData::CAR(insert_car_raw))
+            )
     {
         let insert_car = NodeData::CAR(insert_car_raw);
         let mut current_locked_cons = self;
@@ -1290,6 +1316,7 @@ impl LockedCons {
             invariant
                 self.wf(),
                 current_locked_cons.wf(),
+                current_locked_cons.instance == self.instance,
                 current_cons_perm.is_init(),
                 current_cons_perm.id() == current_locked_cons.cell.id(),
                 NodeData::CAR(current_cons_perm.value().car) == current_locked_cons.view_car,
@@ -1319,6 +1346,7 @@ impl LockedCons {
                 let tracked token_tuple;
                 let tracked updated_old_tail_cons_token;
                 let tracked new_tail_cons_token;
+                let tracked witness_token;
 
                 proof {
                     token_tuple = current_locked_cons.instance.borrow().insert(
@@ -1329,6 +1357,7 @@ impl LockedCons {
                     );
                     updated_old_tail_cons_token = token_tuple.0.get();
                     new_tail_cons_token = token_tuple.1.get();
+                    witness_token = token_tuple.3.get();
                 }
 
                 let locked_cons = LockedCons::new(
@@ -1344,8 +1373,8 @@ impl LockedCons {
                 current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), old_tail_cons);
                 current_locked_cons.release_lock(current_cons_perm);
 
-                return;
-            } 
+                return Tracked(witness_token);
+            }
             // Otherwise, there is another LockedCons
             else {
                 // Acquire the permissions to access the Cons:
@@ -1356,9 +1385,22 @@ impl LockedCons {
                 // If a Cons with this value already exists:
                 if (insert_car_raw == next_cons_view.car) {
                     // Return early and do nothing - the Cons exists.
+
+                    let tracked token_tuple;
+                    let tracked witness_token;
+
+                    proof {
+                        token_tuple = current_locked_cons.instance.borrow().insert_fail(
+                            insert_car, 
+                            next_cons_view.map_token.borrow()
+                        );
+
+                        witness_token = token_tuple.1.get();
+                    }
+
                     current_locked_cons.release_lock(current_cons_perm);
                     next_locked_cons.release_lock(next_cons_perm);
-                    return;
+                    return Tracked(witness_token);
                 }
 
                 // If the next Cons cdr is larger than the insert cdr:
@@ -1370,6 +1412,7 @@ impl LockedCons {
                     let tracked token_tuple;
                     let tracked updated_cons_token;
                     let tracked new_cons_token;
+                    let tracked witness_token;
 
                     proof {
                         token_tuple = current_locked_cons.instance.borrow().insert(
@@ -1380,6 +1423,7 @@ impl LockedCons {
                         );
                         updated_cons_token = token_tuple.0.get();
                         new_cons_token = token_tuple.1.get();
+                        witness_token = token_tuple.3.get();
                     }
 
                     let locked_cons = LockedCons::new(
@@ -1396,7 +1440,7 @@ impl LockedCons {
 
                     current_locked_cons.release_lock(current_cons_perm);
                     next_locked_cons.release_lock(next_cons_perm);
-                    return;
+                    return Tracked(witness_token);
                 }
 
                 // Otherwise, we give up the previous lock, and loop again
