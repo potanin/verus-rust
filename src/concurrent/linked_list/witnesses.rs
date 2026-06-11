@@ -163,13 +163,11 @@ tokenized_state_machine!{
         pub fn uninitialised_operation_inv(&self) -> bool {
             (self.operation_history.is_empty() <==> !self.initialized) &&
             (self.initialized ==> (self.operation_history[0] == Operation::CreateNil)) &&
-            (forall |i: nat, j: nat| #![auto]
+            (forall |i: nat| #![auto]
                 (
                     self.operation_history.dom().contains(i) && 
-                    self.operation_history[i] == Operation::CreateNil && 
-                    self.operation_history.dom().contains(j) &&
-                    self.operation_history[j] == Operation::CreateNil 
-                ) ==> i == j
+                    self.operation_history[i] == Operation::CreateNil
+                ) ==> i == 0
             )
         }
 
