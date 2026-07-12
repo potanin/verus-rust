@@ -178,6 +178,9 @@ struct_with_invariants!{
                 atomic_tokens.cell_witnesses.dom().contains(addr)
             ) &&
             (
+                atomic_tokens.cell_addresses.value().contains(addr)
+            ) &&
+            (
                 forall |map_key: usize| #![auto]
                     (atomic_tokens.cell_witnesses.dom().contains(map_key) && map_key != instance.base_address()) ==>
                         atomic_tokens.cell_witnesses.index(map_key).value().is_init()
@@ -250,11 +253,12 @@ impl TreiberStack {
 
                 ghost points_to_inv => {
                     if let Ok(previous_head) = previous_head_result {
-                        assume(points_to_inv.cell_witnesses.dom().contains(stack_cell_perm.addr()));
-                        let tracked witness_token = points_to_inv.cell_witnesses.tracked_borrow(stack_cell_perm.addr()); 
-                        let tracked token_ref = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
-                        stack_cell_perm.is_distinct(token_ref);
-                        assert(false);
+                        if points_to_inv.cell_witnesses@.dom().contains(stack_cell_perm.addr()) {
+                            let tracked witness_token = points_to_inv.cell_witnesses.tracked_borrow(stack_cell_perm.addr());
+                            let tracked token_ref = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
+                            stack_cell_perm.is_distinct(token_ref);
+                            assert(false);
+                        }
 
                         let tracked witness_token = self.instance.push(stack_cell_address, stack_cell_perm, &mut points_to_inv.cell_addresses, stack_cell_perm);
                         points_to_inv.cell_witnesses.tracked_insert(witness_token.key(), witness_token);
