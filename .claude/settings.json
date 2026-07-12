@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm .git/ORIG_HEAD)",
+      "Bash(git gc *)",
+      "Bash(git push *)",
+      "Bash(/bin/rm -f .git/ORIG_HEAD)"
+    ]
+  }
+}
