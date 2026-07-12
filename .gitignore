@@ -1,1 +1,9 @@
 /target
+*.dSYM/
+
+# Verus --compile drops an executable named after the source file into the CWD.
+# Verification alone (no --compile) never produces these.
+/stack*
+!/stack*.rs
+/rewrite
+/token_existence_toy
